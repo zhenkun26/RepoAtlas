@@ -1,0 +1,16 @@
+{
+  "name": "fixture-app",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "node src/index.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "express": "^5.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  }
+}

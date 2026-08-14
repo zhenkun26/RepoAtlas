@@ -1,0 +1,1 @@
+This file is intentionally small in the fixture; tests set a lower maxFileBytes budget.

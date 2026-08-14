@@ -1,0 +1,6 @@
+node_modules/
+coverage/
+.dsh/
+.DS_Store
+.codex/
+reference/deepseek-harness/

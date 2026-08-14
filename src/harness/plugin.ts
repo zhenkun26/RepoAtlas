@@ -1,0 +1,55 @@
+import { createGoalSpec, missingGoalFields, nextClarificationQuestion, resolveStart } from '../clarification/goal.ts'
+import { analyzeRepository } from '../repository/analyze.ts'
+import { generateReport } from '../reporting/report.ts'
+import { createConfig } from '../config.ts'
+import type { GoalSpec } from '../types.ts'
+import type { HarnessPluginContext, HarnessTool, RepoAtlasPluginConfig, RepoAtlasToolResult } from './public.ts'
+
+export const name = 'repo-atlas'
+export const inject = ['tools'] as const
+
+export function apply(ctx: HarnessPluginContext, pluginConfig: RepoAtlasPluginConfig = {}): void {
+  const config = pluginConfig.workspaceRoot ? createConfig(pluginConfig.workspaceRoot, pluginConfig) : undefined
+  ctx.tools.register(createRepoAtlasTool(config?.workspaceRoot ?? process.cwd(), pluginConfig))
+  ctx.logger?.info('RepoAtlas registered read-only analysis tool')
+}
+
+export function createRepoAtlasTool(workspaceRoot: string, overrides: RepoAtlasPluginConfig = {}): HarnessTool {
+  return {
+    name: 'repo_atlas_analyze',
+    description: '通过多轮 GoalSpec 澄清后，对当前 workspace 执行受预算约束的只读代码库分析并生成证据化报告。',
+    parameters: {
+      type: 'object',
+      properties: {
+        goal: { type: 'object', description: 'GoalSpec 或其部分字段' },
+        start: { type: 'string', enum: ['clarify', 'confirm', 'direct'] },
+      },
+      additionalProperties: false,
+    },
+    output: {
+      schema: { type: 'object' },
+      render: (_args: unknown, value: unknown): Array<{ type: 'text'; text: string }> => [{
+        type: 'text',
+        text: JSON.stringify(value, null, 2),
+      }],
+    },
+    async execute(input: unknown): Promise<RepoAtlasToolResult> {
+      const data = asInput(input)
+      let goal = createGoalSpec(data.goal)
+      if (data.start === 'direct') goal = resolveStart(goal, 'direct')
+      if (!goal.confirmed) {
+        return { policy: 'readonly', goal, clarification: { missing: missingGoalFields(goal), question: nextClarificationQuestion(goal) } }
+      }
+      const session = await analyzeRepository(goal, workspaceRoot, overrides)
+      return { policy: 'readonly', goal, report: generateReport(session) }
+    },
+  }
+}
+
+function asInput(input: unknown): { goal: Partial<GoalSpec>; start?: 'clarify' | 'confirm' | 'direct' } {
+  if (!input || typeof input !== 'object') return { goal: {} }
+  const value = input as Record<string, unknown>
+  const start = value.start === 'clarify' || value.start === 'confirm' || value.start === 'direct' ? value.start : undefined
+  const goal = value.goal && typeof value.goal === 'object' ? value.goal as Partial<GoalSpec> : value as Partial<GoalSpec>
+  return { goal, start }
+}
