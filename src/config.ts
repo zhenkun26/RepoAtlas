@@ -1,5 +1,5 @@
 import path from 'node:path'
-import type { RepoAtlasConfig } from './types.ts'
+import type { ControlledActionRecipe, ControlledActionsConfig, RepoAtlasConfig } from './types.ts'
 
 export const DEFAULT_EXCLUDE_DIRS = [
   '.git',
@@ -29,6 +29,10 @@ export const DEFAULT_CONFIG: Omit<RepoAtlasConfig, 'workspaceRoot'> = {
   maxFileBytes: 1 * 1024 * 1024,
   maxTotalBytes: 20 * 1024 * 1024,
   maxActions: 60,
+  controlledActions: {
+    enabled: false,
+    recipes: [],
+  },
 }
 
 export function createConfig(workspaceRoot: string, overrides: Partial<Omit<RepoAtlasConfig, 'workspaceRoot'>> = {}): RepoAtlasConfig {
@@ -41,7 +45,31 @@ export function createConfig(workspaceRoot: string, overrides: Partial<Omit<Repo
     maxFileBytes: positiveInteger(overrides.maxFileBytes ?? DEFAULT_CONFIG.maxFileBytes, 'maxFileBytes'),
     maxTotalBytes: positiveInteger(overrides.maxTotalBytes ?? DEFAULT_CONFIG.maxTotalBytes, 'maxTotalBytes'),
     maxActions: positiveInteger(overrides.maxActions ?? DEFAULT_CONFIG.maxActions, 'maxActions'),
+    controlledActions: normalizeControlledActions(overrides.controlledActions ?? DEFAULT_CONFIG.controlledActions),
   }
+}
+
+function normalizeControlledActions(value: ControlledActionsConfig): ControlledActionsConfig {
+  return {
+    enabled: value.enabled === true,
+    recipes: value.recipes.map((recipe) => normalizeRecipe(recipe)),
+  }
+}
+
+function normalizeRecipe(recipe: ControlledActionRecipe): ControlledActionRecipe {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(recipe.id)) throw new Error('controlled action recipe id must be kebab-case')
+  if (!recipe.command.trim() || /\s/.test(recipe.command) || recipe.command.includes('/') || recipe.command.includes('\\')) {
+    throw new Error(`controlled action recipe ${recipe.id} must use a bare executable name`)
+  }
+  if (isShellCommand(recipe.command, recipe.args)) throw new Error(`controlled action recipe ${recipe.id} cannot invoke a shell`)
+  if (!Number.isSafeInteger(recipe.timeoutMs) || recipe.timeoutMs <= 0) throw new Error(`controlled action recipe ${recipe.id} timeoutMs must be a positive safe integer`)
+  if (!Number.isSafeInteger(recipe.maxOutputBytes) || recipe.maxOutputBytes <= 0) throw new Error(`controlled action recipe ${recipe.id} maxOutputBytes must be a positive safe integer`)
+  return { ...recipe, args: [...recipe.args] }
+}
+
+function isShellCommand(command: string, args: string[]): boolean {
+  if (['sh', 'bash', 'zsh', 'fish', 'pwsh', 'powershell', 'cmd'].includes(command.toLowerCase())) return true
+  return args.some((arg) => ['-c', '-command', '/c', '/command'].includes(arg.toLowerCase()))
 }
 
 function positiveInteger(value: number, name: string): number {

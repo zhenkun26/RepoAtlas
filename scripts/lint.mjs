@@ -2,11 +2,15 @@ import { execFileSync } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 
 const files = execFileSync('rg', ['--files', 'src'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean)
-const forbidden = /(?:from\s+['"]node:child_process|import\s+.*child_process|\b(?:exec|spawn|fetch|rmSync|unlink|rename)\s*\(|https?:\/\/)/
+const forbidden = /(?:from\s+['"]node:child_process|import\s+.*child_process|\b(?:exec|fetch|rmSync|unlink|rename)\s*\(|https?:\/\/)/
+const capabilitySpawn = /\bspawn\s*\(/g
 const violations = []
 for (const file of files) {
   const text = await readFile(file, 'utf8')
-  if (forbidden.test(text) && !file.includes('/reporting/report.ts')) violations.push(file)
+  const directSpawn = capabilitySpawn.test(text)
+  capabilitySpawn.lastIndex = 0
+  const spawnOutsideAdapter = directSpawn && !file.endsWith('/actions/runtime.ts')
+  if ((forbidden.test(text) || spawnOutsideAdapter) && !file.includes('/reporting/report.ts')) violations.push(file)
 }
 if (violations.length) {
   console.error(`FAIL: forbidden side-effect token found in ${violations.join(', ')}`)

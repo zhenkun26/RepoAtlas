@@ -6,6 +6,14 @@ RepoAtlas v1 的默认权限是只读。Policy Gate 只允许列举、读取、�
 
 报告导出是显式确认后的受控例外：用户必须确认，目标路径必须仍在 workspace 内，且只创建报告三件套。没有确认时不会写文件。
 
+## v1.1 受控动作
+
+受控动作仍默认关闭。启用后，工具只能选择配置中的固定 recipe id 和 workspace 内 cwd；不接受自由 Shell、解释器参数或新的可执行文件。
+
+执行前必须同时满足：Harness 当前 agent 存在 active+armed Goal、Harness `approval.request()` 返回一次性 `allowed-once`，以及完整 sandbox/subprocess/sandboxPolicy 能力可用。无效 recipe、越界路径、缺少 Goal 或审批能力时，不会发起审批或启动子进程。
+
+审批由 Harness 写入 `approval/asked`/`approval/decided`，工具调用结果由 Harness 写入 `tool/call`/`tool/result`；RepoAtlas 返回关联 audit id、退出状态、受限输出和脱敏状态。沙箱不可用或 enforcement 为 partial 时故障关闭。
+
 ## 路径与文件
 
 - workspace 根目录先规范化；包含 `..` 的请求直接拒绝。

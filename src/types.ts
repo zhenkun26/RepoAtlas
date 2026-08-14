@@ -29,6 +29,24 @@ export interface RepoAtlasConfig {
   maxFileBytes: number
   maxTotalBytes: number
   maxActions: number
+  controlledActions: ControlledActionsConfig
+}
+
+export type ControlledActionSandboxMode = 'read-only' | 'workspace-write'
+
+export interface ControlledActionRecipe {
+  id: string
+  command: string
+  args: string[]
+  sandboxMode: ControlledActionSandboxMode
+  timeoutMs: number
+  maxOutputBytes: number
+  enabled: boolean
+}
+
+export interface ControlledActionsConfig {
+  enabled: boolean
+  recipes: ControlledActionRecipe[]
 }
 
 export type ToolAction =

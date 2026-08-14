@@ -2,6 +2,7 @@ import { createGoalSpec, missingGoalFields, nextClarificationQuestion, resolveSt
 import { analyzeRepository } from '../repository/analyze.ts'
 import { generateReport } from '../reporting/report.ts'
 import { createConfig } from '../config.ts'
+import { createControlledActionTool } from './controlled-tool.ts'
 import type { GoalSpec } from '../types.ts'
 import type { HarnessPluginContext, HarnessTool, RepoAtlasPluginConfig, RepoAtlasToolResult } from './public.ts'
 
@@ -9,9 +10,11 @@ export const name = 'repo-atlas'
 export const inject = ['tools'] as const
 
 export function apply(ctx: HarnessPluginContext, pluginConfig: RepoAtlasPluginConfig = {}): void {
-  const config = pluginConfig.workspaceRoot ? createConfig(pluginConfig.workspaceRoot, pluginConfig) : undefined
-  ctx.tools.register(createRepoAtlasTool(config?.workspaceRoot ?? process.cwd(), pluginConfig))
+  const config = createConfig(pluginConfig.workspaceRoot ?? process.cwd(), pluginConfig)
+  ctx.tools.register(createRepoAtlasTool(config.workspaceRoot, pluginConfig))
+  if (config.controlledActions.enabled) ctx.tools.register(createControlledActionTool(config, ctx))
   ctx.logger?.info('RepoAtlas registered read-only analysis tool')
+  if (config.controlledActions.enabled) ctx.logger?.info('RepoAtlas registered controlled action tool with explicit approval')
 }
 
 export function createRepoAtlasTool(workspaceRoot: string, overrides: RepoAtlasPluginConfig = {}): HarnessTool {

@@ -1,5 +1,19 @@
 import type { AnalysisReport, GoalSpec, RepoAtlasConfig } from '../types.ts'
 
+export interface HarnessSession {
+  header?: { cwd?: string }
+}
+
+export interface HarnessAgent {
+  session: HarnessSession
+}
+
+export interface HarnessToolExecution {
+  callId?: string
+  agent?: HarnessAgent
+  signal: AbortSignal
+}
+
 /**
  * Minimal structural surface used by the public DeepSeek Harness plugin API.
  * The adapter intentionally avoids private Harness internals.
@@ -13,12 +27,13 @@ export interface HarnessTool {
     schema: Record<string, unknown>
     render(args: unknown, value: unknown): Array<{ type: 'text'; text: string }>
   }
-  execute(input: unknown, execution?: unknown): Promise<unknown>
+  execute(input: unknown, execution?: HarnessToolExecution): Promise<unknown>
 }
 
 export interface HarnessPluginContext {
   tools: { register(tool: HarnessTool): unknown }
   logger?: { info(message: string): void; warn(message: string): void }
+  get?<T>(name: string, strict?: boolean): T | undefined
 }
 
 export interface RepoAtlasPluginConfig extends Partial<Omit<RepoAtlasConfig, 'workspaceRoot'>> {
