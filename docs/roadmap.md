@@ -19,6 +19,7 @@
 7. v2.3（已完成）：对已应用且 verification=passed 的 patch 提供 session-only isolated-worktree commit draft；commit 必须经过 exact digest、active+armed Goal 和一次性 Harness approval，只能对声明路径执行固定本地 Git staging/commit，并在 postcondition 不确定时保留 worktree。继续禁止 source workspace 写入、merge、push、远程访问、hooks、GPG signing、author override、部署、依赖安装和自动清理。
 8. v2.4（已完成）：对 v2.3 已创建的 session-owned commit 提供独立 source landing draft；只允许 source workspace clean、HEAD exact base revision 下的固定 `merge --ff-only` fast-forward，并要求二次 digest、active+armed Goal 和一次性 Harness approval。继续禁止冲突解决、merge commit、branch 操作、remote、push、回滚和自动清理。
 9. v2.5（已完成）：提供按 proposal id 的 session-only lifecycle inspection，返回 bounded、redacted 的 proposal/patch/verification/commit/landing 快照和非执行状态；不刷新 Git、不读取 workspace、不请求审批、不改变 lifecycle。
-10. v2.6（当前实现）：提供固定上限、newest-first 的 session-only proposal summary listing，支持发现 proposal id 后继续 inspect；不返回路径、evidence、digest、patch text、commit message 或 worktree，不刷新 Git，不跨 session。event history、rollback、merge 和团队协作索引仍不属于本版本。
+10. v2.6（已完成）：提供固定上限、newest-first 的 session-only proposal summary listing，支持发现 proposal id 后继续 inspect；不返回路径、evidence、digest、patch text、commit message 或 worktree，不刷新 Git，不跨 session。
+11. v2.7（当前实现）：提供 source workspace 与 session-owned worktree 的只读 live-state inspection，区分 available/partial/unknown/not-applicable，并保留 creation-unknown 与其他 lifecycle 状态；不写 Git、不修复、不改变 registry、不持久化。event history、rollback、merge 和团队协作索引仍不属于本版本。
 
 每个版本都应先更新安全边界、预算、部分失败语义和验收 fixture，再扩展工具权限。

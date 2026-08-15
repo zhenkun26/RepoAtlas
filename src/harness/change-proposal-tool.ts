@@ -5,11 +5,11 @@ import type { HarnessTool, HarnessToolExecution } from './public.ts'
 export function createChangeProposalTool(manager: ChangeProposalManager, verificationRunner?: ChangeProposalVerificationRunner, commitAuthorizer?: ChangeProposalCommitAuthorizer, landingAuthorizer?: ChangeProposalLandingAuthorizer): HarnessTool {
   return {
     name: 'repo_atlas_change_proposal',
-    description: '查询、列举、准备、审阅、导出、确认、拒绝或释放当前 session 的隔离代码变更提案；支持显式确认后将有界补丁应用到隔离 worktree、创建本地 detached-worktree commit，并可在 Harness 审批后 fast-forward 落地到 source workspace；不会解决冲突、访问 remote 或推送。',
+    description: '查询、列举、实时检查、准备、审阅、导出、确认、拒绝或释放当前 session 的隔离代码变更提案；支持显式确认后将有界补丁应用到隔离 worktree、创建本地 detached-worktree commit，并可在 Harness 审批后 fast-forward 落地到 source workspace；不会解决冲突、访问 remote 或推送。',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['prepare', 'inspect', 'list', 'confirm', 'reject', 'release', 'prepare-patch', 'review-patch', 'export-patch', 'confirm-patch', 'reject-patch', 'verify-patch', 'prepare-commit', 'confirm-commit', 'reject-commit', 'prepare-landing', 'confirm-landing', 'reject-landing'] },
+        action: { type: 'string', enum: ['prepare', 'inspect', 'list', 'inspect-live', 'confirm', 'reject', 'release', 'prepare-patch', 'review-patch', 'export-patch', 'confirm-patch', 'reject-patch', 'verify-patch', 'prepare-commit', 'confirm-commit', 'reject-commit', 'prepare-landing', 'confirm-landing', 'reject-landing'] },
         sessionId: { type: 'string' },
         intent: { type: 'string' },
         targets: { type: 'array' },
@@ -40,6 +40,10 @@ export function createChangeProposalTool(manager: ChangeProposalManager, verific
       const request = proposalInput(input)
       const signal = execution?.signal ?? new AbortController().signal
       if (request.action === 'list') return manager.list({ limit: request.invalidLimit ? Number.NaN : request.limit })
+      if (request.action === 'inspect-live') {
+        if (!request.proposalId) return { status: 'blocked', operationStatus: 'blocked', reason: 'inspect-live requires proposalId' }
+        return manager.inspectLive(request.proposalId, signal)
+      }
       if (request.action === 'inspect') {
         if (!request.proposalId) return { status: 'blocked', operationStatus: 'blocked', reason: 'inspect requires proposalId' }
         return manager.inspect(request.proposalId)
@@ -109,7 +113,7 @@ export function createChangeProposalTool(manager: ChangeProposalManager, verific
 }
 
 function proposalInput(input: unknown): {
-  action: 'prepare' | 'inspect' | 'list' | 'confirm' | 'reject' | 'release' | 'prepare-patch' | 'review-patch' | 'export-patch' | 'confirm-patch' | 'reject-patch' | 'verify-patch' | 'prepare-commit' | 'confirm-commit' | 'reject-commit' | 'prepare-landing' | 'confirm-landing' | 'reject-landing'
+  action: 'prepare' | 'inspect' | 'list' | 'inspect-live' | 'confirm' | 'reject' | 'release' | 'prepare-patch' | 'review-patch' | 'export-patch' | 'confirm-patch' | 'reject-patch' | 'verify-patch' | 'prepare-commit' | 'confirm-commit' | 'reject-commit' | 'prepare-landing' | 'confirm-landing' | 'reject-landing'
   request?: ChangeProposalRequest
   proposalId?: string
   confirmationDigest?: string
@@ -126,7 +130,7 @@ function proposalInput(input: unknown): {
   invalidLimit: boolean
 } {
   if (!isRecord(input)) return { action: 'prepare', invalidLimit: false }
-  const action = input.action === 'inspect' || input.action === 'list' || input.action === 'confirm' || input.action === 'reject' || input.action === 'release' || input.action === 'prepare-patch' || input.action === 'review-patch' || input.action === 'export-patch' || input.action === 'confirm-patch' || input.action === 'reject-patch' || input.action === 'verify-patch' || input.action === 'prepare-commit' || input.action === 'confirm-commit' || input.action === 'reject-commit' || input.action === 'prepare-landing' || input.action === 'confirm-landing' || input.action === 'reject-landing' ? input.action : 'prepare'
+  const action = input.action === 'inspect' || input.action === 'list' || input.action === 'inspect-live' || input.action === 'confirm' || input.action === 'reject' || input.action === 'release' || input.action === 'prepare-patch' || input.action === 'review-patch' || input.action === 'export-patch' || input.action === 'confirm-patch' || input.action === 'reject-patch' || input.action === 'verify-patch' || input.action === 'prepare-commit' || input.action === 'confirm-commit' || input.action === 'reject-commit' || input.action === 'prepare-landing' || input.action === 'confirm-landing' || input.action === 'reject-landing' ? input.action : 'prepare'
   const sessionId = typeof input.sessionId === 'string' ? input.sessionId : ''
   const intent = typeof input.intent === 'string' ? input.intent : ''
   const targets = Array.isArray(input.targets) ? input.targets.flatMap(parseTarget) : []

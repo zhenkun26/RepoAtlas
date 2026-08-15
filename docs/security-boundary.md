@@ -54,6 +54,12 @@ v2.6 的 `repo_atlas_change_proposal` 增加 `list`。它只从当前 session re
 
 limit 缺失使用默认值；0、负数、小数、非数值、非 safe integer 或超过 100 时 fail closed，返回空列表且不暴露 registry 数量。list 不刷新 source workspace、isolated worktree 或 Git，不请求 Harness approval/Goal，不调用 sandbox/subprocess，不改变 lifecycle，不跨 session 或持久化；已记录的 rejected、blocked、interrupted、released 和 `*-creation-unknown` 状态原样保留。
 
+## v2.7 read-only live-state inspection
+
+v2.7 的 `repo_atlas_change_proposal` 增加 `inspect-live`。它只从当前 proposal 派生 source workspace 与 session-owned worktree 的固定本地 read-only inspection，返回 source/worktree 的 clean、revision/base match、repository/path/identity match 和 changed path count；live observation 不返回 absolute paths 或 changed path names。
+
+source 与 worktree 检查分别标记 available、unknown 或 not-applicable，overall 状态区分 available、partial、unknown 和 not-applicable。检查失败、AbortSignal 或 uncertain postcondition 只影响 live observation，不改变 proposal、patch、verification、commit、landing 或 release 状态；不会把 `creation-unknown` 升级为 created/landed 或未执行。inspect-live 不请求 approval/Goal，不调用 sandbox/subprocess，不执行 mutation Git、网络、cleanup、持久化或跨 session 操作。
+
 ## 路径与文件
 
 - workspace 根目录先规范化；包含 `..` 的请求直接拒绝。
@@ -78,4 +84,4 @@ AST 只处理已确认 scope 内的 `.ts`、`.tsx`、`.js`、`.jsx` 脱敏文本
 
 ## 回滚
 
-RepoAtlas 是无迁移的插件。停用 Harness profile 或移除本项目目录即可回滚，不需要恢复数据库或远程配置。v2.6 的 summary listing 与 v2.5 inspection 不新增持久状态；既有 patch/export/verification/commit/landing registry 随进程结束丢弃。source landing 只执行显式确认的 local fast-forward，remote 不会被工具访问或更新。孤儿 worktree 或 landing uncertainty 仍按人工检查和恢复路径处理，工具不会跨 session 自动接管、reset 或删除。
+RepoAtlas 是无迁移的插件。停用 Harness profile 或移除本项目目录即可回滚，不需要恢复数据库或远程配置。v2.7 的 live observation、v2.6 summary listing 与 v2.5 inspection 不新增持久状态；既有 patch/export/verification/commit/landing registry 随进程结束丢弃。source landing 只执行显式确认的 local fast-forward，remote 不会被工具访问或更新。孤儿 worktree 或 landing uncertainty 仍按人工检查和恢复路径处理，工具不会跨 session 自动接管、reset 或删除。

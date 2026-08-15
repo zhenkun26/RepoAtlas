@@ -16,6 +16,9 @@ import type {
   ChangeProposalLanding,
   ChangeProposalLandingRequest,
   ChangeProposalLandingExecutionStatus,
+  ChangeProposalLiveInspection,
+  ChangeProposalLiveSourceObservation,
+  ChangeProposalLiveWorktreeObservation,
   ChangeProposalListRequest,
   ChangeProposalListResult,
   ChangeProposalPatch,
@@ -228,6 +231,53 @@ export class ChangeProposalManager {
     const proposal = this.proposals.get(proposalId)
     if (!proposal) return blockedResult('blocked', 'proposal is unknown to the current session')
     return resultFor(proposal, 'session-only proposal lifecycle snapshot returned; live workspace and Git state were not inspected')
+  }
+
+  async inspectLive(proposalId: string, signal?: AbortSignal): Promise<ChangeProposalResult> {
+    const proposal = this.proposals.get(proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal is unknown to the current session')
+    if (signal?.aborted) {
+      return resultForWithLive(proposal, 'live inspection was interrupted before adapter access', interruptedLiveInspection(proposal, this.limits.maxTextBytes))
+    }
+
+    let source: ChangeProposalLiveSourceObservation
+    try {
+      const inspected = await this.adapter.inspectSource(proposal.repositoryRoot, proposal.workspaceRoot, signal)
+      source = {
+        status: 'available',
+        reason: 'source workspace was inspected read-only',
+        clean: !inspected.dirty,
+        revision: inspected.revision,
+        baseRevisionMatches: inspected.revision === proposal.baseRevision,
+        repositoryRootMatches: path.resolve(inspected.repositoryRoot) === path.resolve(proposal.repositoryRoot),
+        workspacePathMatches: path.resolve(inspected.path) === path.resolve(proposal.workspaceRoot),
+      }
+    } catch (error) {
+      source = { status: 'unknown', reason: boundedRedactedText(`source workspace inspection failed: ${redactError(error)}`, this.limits.maxTextBytes) }
+    }
+
+    let worktree: ChangeProposalLiveWorktreeObservation
+    if (!proposal.worktree) {
+      worktree = { status: 'not-applicable', reason: 'proposal has no managed worktree to inspect' }
+    } else {
+      try {
+        const inspected = await this.adapter.inspect(proposal.repositoryRoot, proposal.worktree, signal)
+        worktree = {
+          status: 'available',
+          reason: 'session-owned worktree was inspected read-only',
+          clean: !inspected.dirty,
+          baseRevision: inspected.baseRevision,
+          baseRevisionMatches: inspected.baseRevision === proposal.baseRevision,
+          identityMatches: inspected.identity === proposal.worktree.identity,
+          changedPathCount: inspected.changedPaths.length,
+        }
+      } catch (error) {
+        worktree = { status: 'unknown', reason: boundedRedactedText(`managed worktree inspection failed: ${redactError(error)}`, this.limits.maxTextBytes) }
+      }
+    }
+
+    const live = createLiveInspection(source, worktree)
+    return resultForWithLive(proposal, live.reason, live)
   }
 
   list(request: ChangeProposalListRequest = {}): ChangeProposalListResult {
@@ -1325,6 +1375,47 @@ function resultForWithCommit(proposal: ChangeProposal, reason: string, commit: C
 
 function resultForWithLanding(proposal: ChangeProposal, reason: string, landing: ChangeProposalLanding): ChangeProposalResult {
   return { ...resultFor(proposal, reason), landing: { ...landing } }
+}
+
+function resultForWithLive(proposal: ChangeProposal, reason: string, liveInspection: ChangeProposalLiveInspection): ChangeProposalResult {
+  return { ...resultFor(proposal, reason), liveInspection }
+}
+
+function createLiveInspection(
+  source: ChangeProposalLiveSourceObservation,
+  worktree: ChangeProposalLiveWorktreeObservation,
+  maxTextBytes = 4_096,
+): ChangeProposalLiveInspection {
+  const statuses = [source.status, worktree.status].filter((status) => status !== 'not-applicable')
+  const available = statuses.filter((status) => status === 'available').length
+  const unknown = statuses.filter((status) => status === 'unknown').length
+  const status: ChangeProposalLiveInspection['status'] = statuses.length === 0
+    ? 'not-applicable'
+    : unknown === 0
+      ? 'available'
+      : available > 0
+        ? 'partial'
+        : 'unknown'
+  const details = [source.reason, worktree.reason].filter((reason) => reason.length > 0).join('; ')
+  return {
+    status,
+    reason: boundedRedactedText(`live observation ${status}; ${details}`, maxTextBytes),
+    checkedAt: new Date().toISOString(),
+    sessionOnly: true,
+    source,
+    worktree,
+  }
+}
+
+function interruptedLiveInspection(proposal: ChangeProposal, maxTextBytes: number): ChangeProposalLiveInspection {
+  const source: ChangeProposalLiveSourceObservation = {
+    status: 'unknown',
+    reason: boundedRedactedText('source workspace inspection was interrupted before adapter access', maxTextBytes),
+  }
+  const worktree: ChangeProposalLiveWorktreeObservation = proposal.worktree
+    ? { status: 'unknown', reason: boundedRedactedText('managed worktree inspection was interrupted before adapter access', maxTextBytes) }
+    : { status: 'not-applicable', reason: 'proposal has no managed worktree to inspect' }
+  return createLiveInspection(source, worktree, maxTextBytes)
 }
 
 function verificationOperationStatus(status: ChangeProposalVerification['status']): ChangeProposal['operationStatus'] {

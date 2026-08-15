@@ -37,6 +37,7 @@ test('Harness adapter registers read-only analysis and session-only proposal too
   assert.match(JSON.stringify(proposal.parameters), /reject-landing/)
   assert.match(JSON.stringify(proposal.parameters), /inspect/)
   assert.match(JSON.stringify(proposal.parameters), /list/)
+  assert.match(JSON.stringify(proposal.parameters), /inspect-live/)
   assert.match(JSON.stringify(proposal.parameters), /limit/)
   assert.deepEqual(analysis.output.schema, { type: 'object' })
   assert.match(analysis.output.render({}, { policy: 'readonly' })[0]?.text ?? '', /"policy": "readonly"/)
@@ -73,6 +74,17 @@ test('Harness adapter registers read-only analysis and session-only proposal too
   const invalidTypeList = await proposal.execute({ action: 'list', limit: 'many' }) as { status: string; returned: number }
   assert.equal(invalidTypeList.status, 'blocked')
   assert.equal(invalidTypeList.returned, 0)
+  const live = await proposal.execute({ action: 'inspect-live', proposalId: prepared.proposal?.proposalId }) as { status: string; liveInspection?: { status: string; source?: { status: string }; worktree?: { status: string } } }
+  assert.equal(live.status, 'awaiting-confirmation')
+  assert.equal(live.liveInspection?.status, 'available')
+  assert.equal(live.liveInspection?.source?.status, 'available')
+  assert.equal(live.liveInspection?.worktree?.status, 'not-applicable')
+  const missingLive = await proposal.execute({ action: 'inspect-live' }) as { status: string; operationStatus: string }
+  assert.equal(missingLive.status, 'blocked')
+  assert.equal(missingLive.operationStatus, 'blocked')
+  const unknownLive = await proposal.execute({ action: 'inspect-live', proposalId: 'proposal-unknown' }) as { status: string; liveInspection?: unknown }
+  assert.equal(unknownLive.status, 'blocked')
+  assert.equal(unknownLive.liveInspection, undefined)
   const clarification = await analysis.execute({}) as { clarification?: { question?: { field?: string } } }
   assert.equal(clarification.clarification?.question?.field, 'intent')
   assert.ok(logs.some((message) => message.includes('read-only')))

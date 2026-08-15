@@ -19,6 +19,8 @@ class FakeGitAdapter implements GitWorktreeAdapter {
   applyPatchCount = 0
   commitCount = 0
   landCount = 0
+  inspectCount = 0
+  inspectSourceCount = 0
   commitRevision = 'a'.repeat(40)
   sourceRevision = 'base-1'
   sourceDirty = false
@@ -29,6 +31,7 @@ class FakeGitAdapter implements GitWorktreeAdapter {
   failCommit = false
   failLanding = false
   failLandingPostcondition = false
+  failSourceInspection = false
   failCommitPostcondition = false
   failPostcondition = false
   identityMismatch = false
@@ -44,11 +47,14 @@ class FakeGitAdapter implements GitWorktreeAdapter {
   }
 
   async inspect(_repositoryRoot: string, worktree: ChangeProposalWorktree): Promise<ChangeProposalWorktree & { dirty: boolean; changedPaths: string[] }> {
+    this.inspectCount += 1
     if ((this.failPostcondition && this.applyPatchCount > 0) || (this.failCommitPostcondition && this.commitCount > 0)) throw new Error('postcondition inspection unavailable')
     return { ...worktree, baseRevision: this.commitCount > 0 ? this.commitRevision : worktree.baseRevision, identity: this.identityMismatch ? 'identity-mismatch' : worktree.identity, dirty: this.dirty, changedPaths: [...this.changedPaths] }
   }
 
   async inspectSource(repositoryRoot: string, sourceWorkspaceRoot: string): Promise<{ path: string; repositoryRoot: string; revision: string; dirty: boolean }> {
+    this.inspectSourceCount += 1
+    if (this.failSourceInspection) throw new Error('source inspection unavailable')
     if (this.failLandingPostcondition && this.landCount > 0) throw new Error('source postcondition inspection unavailable')
     return { path: sourceWorkspaceRoot, repositoryRoot, revision: this.sourceRevision, dirty: this.sourceDirty }
   }
@@ -328,6 +334,77 @@ test('proposal listing rejects invalid limits and preserves uncertain execution 
   assert.equal(summary?.commitCreated, false)
   assert.equal(summary?.executionStatus.push, 'push-not-performed')
   assert.equal(adapter.commitCount, commitCount)
+})
+
+test('live inspection reports source and worktree observations without lifecycle mutation', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+  const pending = await manager.prepare(request())
+  const proposalId = pending.proposal?.proposalId ?? ''
+  const pendingOperation = pending.proposal?.operationStatus
+
+  const sourceOnly = await manager.inspectLive(proposalId)
+  assert.equal(sourceOnly.liveInspection?.status, 'available')
+  assert.equal(sourceOnly.liveInspection?.source.status, 'available')
+  assert.equal(sourceOnly.liveInspection?.source.baseRevisionMatches, true)
+  assert.equal(sourceOnly.liveInspection?.source.repositoryRootMatches, true)
+  assert.equal(sourceOnly.liveInspection?.source.workspacePathMatches, true)
+  assert.equal(sourceOnly.liveInspection?.worktree.status, 'not-applicable')
+  assert.equal(sourceOnly.proposal?.operationStatus, pendingOperation)
+  assert.equal(adapter.inspectCount, 0)
+  assert.equal(adapter.inspectSourceCount, 1)
+
+  const confirmed = await manager.confirm(proposalId, pending.proposal?.confirmationDigest ?? '')
+  const confirmedLive = await manager.inspectLive(proposalId)
+  assert.equal(confirmedLive.liveInspection?.status, 'available')
+  assert.equal(confirmedLive.liveInspection?.worktree.status, 'available')
+  assert.equal(confirmedLive.liveInspection?.worktree.clean, true)
+  assert.equal(confirmedLive.liveInspection?.worktree.baseRevisionMatches, true)
+  assert.equal(confirmedLive.liveInspection?.worktree.identityMatches, true)
+  assert.equal(confirmedLive.liveInspection?.worktree.changedPathCount, 0)
+  assert.equal(confirmedLive.proposal?.operationStatus, confirmed.proposal?.operationStatus)
+  adapter.dirty = true
+  const dirty = await manager.inspectLive(proposalId)
+  assert.equal(dirty.liveInspection?.worktree.clean, false)
+  assert.equal(dirty.proposal?.status, 'confirmed')
+})
+
+test('live inspection distinguishes partial, unknown, abort, and unknown proposal states', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+  const pending = await manager.prepare(request())
+  const confirmed = await manager.confirm(pending.proposal?.proposalId ?? '', pending.proposal?.confirmationDigest ?? '')
+  const patchDraft = await manager.preparePatch({ proposalId: confirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  await manager.confirmPatch(patchDraft.proposal?.patch?.patchId ?? '', patchDraft.proposal?.patch?.confirmationDigest ?? '')
+  adapter.failPostcondition = true
+  const before = manager.inspect(pending.proposal?.proposalId ?? '')
+  const partial = await manager.inspectLive(pending.proposal?.proposalId ?? '')
+  assert.equal(partial.liveInspection?.status, 'partial')
+  assert.equal(partial.liveInspection?.source.status, 'available')
+  assert.equal(partial.liveInspection?.worktree.status, 'unknown')
+  assert.equal(partial.proposal?.operationStatus, before.operationStatus)
+
+  adapter.failSourceInspection = true
+  const unknown = await manager.inspectLive(pending.proposal?.proposalId ?? '')
+  assert.equal(unknown.liveInspection?.status, 'unknown')
+  assert.equal(unknown.liveInspection?.source.status, 'unknown')
+  assert.equal(unknown.liveInspection?.worktree.status, 'unknown')
+  assert.equal(JSON.stringify(unknown.liveInspection).includes('src/index.ts'), false)
+
+  const controller = new AbortController()
+  controller.abort()
+  const interrupted = await manager.inspectLive(pending.proposal?.proposalId ?? '', controller.signal)
+  assert.equal(interrupted.liveInspection?.status, 'unknown')
+  assert.equal(interrupted.liveInspection?.source.status, 'unknown')
+  assert.equal(adapter.inspectSourceCount >= 2, true)
+
+  const beforeCalls = adapter.inspectSourceCount + adapter.inspectCount
+  const missing = await manager.inspectLive('proposal-unknown')
+  assert.equal(missing.status, 'blocked')
+  assert.equal(missing.liveInspection, undefined)
+  assert.equal(adapter.inspectSourceCount + adapter.inspectCount, beforeCalls)
 })
 
 test('proposal validation preserves safe partial targets and bounded evidence', async () => {

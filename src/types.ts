@@ -335,6 +335,39 @@ export interface ChangeProposalLandingRequest {
   proposalId: string
 }
 
+export type ChangeProposalLiveInspectionStatus = 'available' | 'partial' | 'unknown' | 'not-applicable'
+
+export type ChangeProposalLiveCheckStatus = 'available' | 'unknown' | 'not-applicable'
+
+export interface ChangeProposalLiveSourceObservation {
+  status: ChangeProposalLiveCheckStatus
+  reason: string
+  clean?: boolean
+  revision?: string
+  baseRevisionMatches?: boolean
+  repositoryRootMatches?: boolean
+  workspacePathMatches?: boolean
+}
+
+export interface ChangeProposalLiveWorktreeObservation {
+  status: ChangeProposalLiveCheckStatus
+  reason: string
+  clean?: boolean
+  baseRevision?: string
+  baseRevisionMatches?: boolean
+  identityMatches?: boolean
+  changedPathCount?: number
+}
+
+export interface ChangeProposalLiveInspection {
+  status: ChangeProposalLiveInspectionStatus
+  reason: string
+  checkedAt: string
+  sessionOnly: true
+  source: ChangeProposalLiveSourceObservation
+  worktree: ChangeProposalLiveWorktreeObservation
+}
+
 export interface ChangeProposalTarget {
   relativePath: string
   operation: ChangeProposalOperation
@@ -531,4 +564,5 @@ export interface ChangeProposalResult {
   verification?: ChangeProposalVerification
   commit?: ChangeProposalCommit
   landing?: ChangeProposalLanding
+  liveInspection?: ChangeProposalLiveInspection
 }
