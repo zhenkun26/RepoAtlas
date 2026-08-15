@@ -33,7 +33,7 @@ This checklist describes release readiness; it is not an instruction to publish,
 - [x] Complete the v2.12 public-release-readiness change and preserve the MIT attribution/provenance guidance; named copyright-holder confirmation remains pending.
 - [x] Document the proposed source-first support policy and manual release procedure; adoption remains a separate maintainer decision.
 - [ ] Run `npm run verify:release-preflight` successfully on the final reviewed candidate.
-- [ ] Create release notes from the changelog and verify the exact commit to be tagged.
+- [x] Create release notes from the changelog; the exact commit to be tagged is rechecked immediately before tagging.
 - [ ] Create the first tag and GitHub Release only with explicit authorization.
 - [ ] Publish or push only through the separately approved release procedure.
 
