@@ -1,15 +1,15 @@
-import type { ChangeProposalOperation, ChangeProposalRequest } from '../types.ts'
-import { ChangeProposalManager, type ChangeProposalVerificationRunner } from '../repository/change-proposal.ts'
+import type { ChangeProposalRequest } from '../types.ts'
+import { ChangeProposalManager, type ChangeProposalCommitAuthorizer, type ChangeProposalVerificationRunner } from '../repository/change-proposal.ts'
 import type { HarnessTool, HarnessToolExecution } from './public.ts'
 
-export function createChangeProposalTool(manager: ChangeProposalManager, verificationRunner?: ChangeProposalVerificationRunner): HarnessTool {
+export function createChangeProposalTool(manager: ChangeProposalManager, verificationRunner?: ChangeProposalVerificationRunner, commitAuthorizer?: ChangeProposalCommitAuthorizer): HarnessTool {
   return {
     name: 'repo_atlas_change_proposal',
-    description: '准备、审阅、导出、确认、拒绝或释放当前 session 的隔离代码变更提案；支持显式确认后将有界补丁应用到隔离 worktree，并可在 Harness 审批后运行只读验证；不会提交或推送。',
+    description: '准备、审阅、导出、确认、拒绝或释放当前 session 的隔离代码变更提案；支持显式确认后将有界补丁应用到隔离 worktree，并可在 Harness 审批后运行只读验证或创建本地 detached-worktree commit；不会修改 source workspace、merge 或推送。',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['prepare', 'confirm', 'reject', 'release', 'prepare-patch', 'review-patch', 'export-patch', 'confirm-patch', 'reject-patch', 'verify-patch'] },
+        action: { type: 'string', enum: ['prepare', 'confirm', 'reject', 'release', 'prepare-patch', 'review-patch', 'export-patch', 'confirm-patch', 'reject-patch', 'verify-patch', 'prepare-commit', 'confirm-commit', 'reject-commit'] },
         sessionId: { type: 'string' },
         intent: { type: 'string' },
         targets: { type: 'array' },
@@ -20,6 +20,9 @@ export function createChangeProposalTool(manager: ChangeProposalManager, verific
         patchText: { type: 'string' },
         patchConfirmationDigest: { type: 'string' },
         verificationRecipeId: { type: 'string', description: '已配置的只读验证 recipe 标识' },
+        commitId: { type: 'string' },
+        commitConfirmationDigest: { type: 'string' },
+        commitMessage: { type: 'string', description: '显式提供的 bounded、非 secret-like 本地 commit message' },
       },
       additionalProperties: false,
     },
@@ -65,6 +68,18 @@ export function createChangeProposalTool(manager: ChangeProposalManager, verific
           recipeId: request.verificationRecipeId,
         }, verificationRunner, execution ? { callId: execution.callId, agent: execution.agent } : undefined, signal)
       }
+      if (request.action === 'prepare-commit') {
+        if (!request.proposalId || request.commitMessage === undefined) return { status: 'blocked', operationStatus: 'commit-blocked', reason: 'prepare-commit requires proposalId and commitMessage' }
+        return manager.prepareCommit({ proposalId: request.proposalId, commitMessage: request.commitMessage }, signal)
+      }
+      if (request.action === 'confirm-commit') {
+        if (!request.commitId) return { status: 'blocked', operationStatus: 'commit-blocked', reason: 'confirm-commit requires commitId' }
+        return manager.confirmCommit(request.commitId, request.commitConfirmationDigest ?? '', commitAuthorizer, execution ? { callId: execution.callId, agent: execution.agent } : undefined, signal)
+      }
+      if (request.action === 'reject-commit') {
+        if (!request.commitId) return { status: 'blocked', operationStatus: 'commit-blocked', reason: 'reject-commit requires commitId' }
+        return manager.rejectCommit(request.commitId)
+      }
       if (!request.proposalId) return { status: 'blocked', operationStatus: 'blocked', reason: `${request.action} requires proposalId` }
       if (request.action === 'confirm') return manager.confirm(request.proposalId, request.confirmationDigest ?? '', signal)
       if (request.action === 'reject') return manager.reject(request.proposalId)
@@ -74,7 +89,7 @@ export function createChangeProposalTool(manager: ChangeProposalManager, verific
 }
 
 function proposalInput(input: unknown): {
-  action: 'prepare' | 'confirm' | 'reject' | 'release' | 'prepare-patch' | 'review-patch' | 'export-patch' | 'confirm-patch' | 'reject-patch' | 'verify-patch'
+  action: 'prepare' | 'confirm' | 'reject' | 'release' | 'prepare-patch' | 'review-patch' | 'export-patch' | 'confirm-patch' | 'reject-patch' | 'verify-patch' | 'prepare-commit' | 'confirm-commit' | 'reject-commit'
   request?: ChangeProposalRequest
   proposalId?: string
   confirmationDigest?: string
@@ -82,9 +97,12 @@ function proposalInput(input: unknown): {
   patchText?: string
   patchConfirmationDigest?: string
   verificationRecipeId?: string
+  commitId?: string
+  commitConfirmationDigest?: string
+  commitMessage?: string
 } {
   if (!isRecord(input)) return { action: 'prepare' }
-  const action = input.action === 'confirm' || input.action === 'reject' || input.action === 'release' || input.action === 'prepare-patch' || input.action === 'review-patch' || input.action === 'export-patch' || input.action === 'confirm-patch' || input.action === 'reject-patch' || input.action === 'verify-patch' ? input.action : 'prepare'
+  const action = input.action === 'confirm' || input.action === 'reject' || input.action === 'release' || input.action === 'prepare-patch' || input.action === 'review-patch' || input.action === 'export-patch' || input.action === 'confirm-patch' || input.action === 'reject-patch' || input.action === 'verify-patch' || input.action === 'prepare-commit' || input.action === 'confirm-commit' || input.action === 'reject-commit' ? input.action : 'prepare'
   const sessionId = typeof input.sessionId === 'string' ? input.sessionId : ''
   const intent = typeof input.intent === 'string' ? input.intent : ''
   const targets = Array.isArray(input.targets) ? input.targets.flatMap(parseTarget) : []
@@ -98,6 +116,9 @@ function proposalInput(input: unknown): {
     patchText: typeof input.patchText === 'string' ? input.patchText : undefined,
     patchConfirmationDigest: typeof input.patchConfirmationDigest === 'string' ? input.patchConfirmationDigest : undefined,
     verificationRecipeId: typeof input.verificationRecipeId === 'string' ? input.verificationRecipeId : undefined,
+    commitId: typeof input.commitId === 'string' ? input.commitId : undefined,
+    commitConfirmationDigest: typeof input.commitConfirmationDigest === 'string' ? input.commitConfirmationDigest : undefined,
+    commitMessage: typeof input.commitMessage === 'string' ? input.commitMessage : undefined,
   }
 }
 

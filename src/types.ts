@@ -280,6 +280,11 @@ export type ChangeProposalOperationStatus =
   | 'patch-verification-blocked'
   | 'patch-verification-interrupted'
   | 'patch-rejected'
+  | 'commit-awaiting-confirmation'
+  | 'commit-created'
+  | 'commit-rejected'
+  | 'commit-blocked'
+  | 'commit-interrupted'
   | 'patch-not-applied'
   | 'commit-not-created'
   | 'push-not-performed'
@@ -310,6 +315,11 @@ export interface ChangeProposalVerifyPatchRequest {
   recipeId: string
 }
 
+export interface ChangeProposalCommitRequest {
+  proposalId: string
+  commitMessage: string
+}
+
 export interface ChangeProposalTarget {
   relativePath: string
   operation: ChangeProposalOperation
@@ -329,6 +339,10 @@ export type ChangeProposalPatchStatus = 'not-prepared' | 'awaiting-confirmation'
 export type ChangeProposalPatchExecutionStatus = 'patch-not-applied' | 'patch-applied' | 'patch-application-unknown'
 
 export type ChangeProposalVerificationStatus = 'not-run' | 'passed' | 'failed' | 'blocked' | 'interrupted' | 'denied' | 'sandbox-unavailable' | 'timed-out' | 'cancelled'
+
+export type ChangeProposalCommitStatus = 'not-prepared' | 'awaiting-confirmation' | 'created' | 'rejected' | 'blocked' | 'interrupted'
+
+export type ChangeProposalCommitExecutionStatus = 'commit-not-created' | 'commit-created' | 'commit-creation-unknown'
 
 export interface ChangeProposalPatchFileSummary {
   relativePath: string
@@ -372,6 +386,18 @@ export interface ChangeProposalPatchExport {
   exportedAt: string
 }
 
+export interface ChangeProposalCommit {
+  commitId: string
+  confirmationDigest: string
+  status: ChangeProposalCommitStatus
+  message: string
+  createdAt: string
+  expiresAt: string
+  executionStatus: ChangeProposalCommitExecutionStatus
+  approvalAuditId?: string
+  revision?: string
+}
+
 export interface ChangeProposalPatch {
   patchId: string
   confirmationDigest: string
@@ -387,7 +413,7 @@ export interface ChangeProposalPatch {
 
 export interface ChangeProposalExecutionStatus {
   patch: ChangeProposalPatchExecutionStatus
-  commit: 'commit-not-created'
+  commit: ChangeProposalCommitExecutionStatus
   push: 'push-not-performed'
 }
 
@@ -408,11 +434,12 @@ export interface ChangeProposal {
   expiresAt: string
   executionStatus: ChangeProposalExecutionStatus
   patchApplied: boolean
-  commitCreated: false
+  commitCreated: boolean
   pushPerformed: false
   createdAt: string
   worktree?: ChangeProposalWorktree
   patch?: ChangeProposalPatch
+  commit?: ChangeProposalCommit
 }
 
 export interface ChangeProposalResult {
@@ -422,4 +449,5 @@ export interface ChangeProposalResult {
   proposal?: ChangeProposal
   patchExport?: ChangeProposalPatchExport
   verification?: ChangeProposalVerification
+  commit?: ChangeProposalCommit
 }

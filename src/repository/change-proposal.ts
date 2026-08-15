@@ -10,6 +10,9 @@ import { isPathCoveredByScope } from './evidence-cache.ts'
 import type {
   AnalysisSession,
   ChangeProposal,
+  ChangeProposalCommit,
+  ChangeProposalCommitRequest,
+  ChangeProposalCommitExecutionStatus,
   ChangeProposalPatch,
   ChangeProposalPatchFileSummary,
   ChangeProposalPatchRequest,
@@ -64,6 +67,7 @@ export interface GitWorktreeAdapter {
   create(repositoryRoot: string, baseRevision: string, signal?: AbortSignal): Promise<ChangeProposalWorktree>
   inspect(repositoryRoot: string, worktree: ChangeProposalWorktree, signal?: AbortSignal): Promise<InspectedWorktree>
   applyPatch(repositoryRoot: string, worktree: ChangeProposalWorktree, patchText: string, workspaceRelativeRoot: string, signal?: AbortSignal): Promise<void>
+  commit(repositoryRoot: string, worktree: ChangeProposalWorktree, repositoryRelativePaths: readonly string[], commitMessage: string, signal?: AbortSignal): Promise<string>
   remove(repositoryRoot: string, worktree: ChangeProposalWorktree, signal?: AbortSignal): Promise<void>
 }
 
@@ -81,10 +85,34 @@ export interface ChangeProposalVerificationRunner {
   }): Promise<ChangeProposalVerification>
 }
 
+export interface ChangeProposalCommitExecution extends ChangeProposalVerificationExecution {}
+
+export interface ChangeProposalCommitApproval {
+  allowed: boolean
+  auditId?: string
+  reason: string
+}
+
+export interface ChangeProposalCommitAuthorizer {
+  authorize(request: {
+    commitId: string
+    confirmationDigest: string
+    commitMessage: string
+    worktree: ChangeProposalWorktree
+    execution?: ChangeProposalCommitExecution
+    signal?: AbortSignal
+  }): Promise<ChangeProposalCommitApproval>
+}
+
 interface StoredPatchDraft {
   proposalId: string
   patchText: string
   patch: ChangeProposalPatch
+}
+
+interface StoredCommitDraft {
+  proposalId: string
+  commit: ChangeProposalCommit
 }
 
 interface ParsedPatch {
@@ -102,6 +130,16 @@ class PatchApplicationError extends Error {
   }
 }
 
+class CommitOperationError extends Error {
+  readonly uncertain: boolean
+
+  constructor(message: string, uncertain: boolean) {
+    super(message)
+    this.name = 'CommitOperationError'
+    this.uncertain = uncertain
+  }
+}
+
 export interface ChangeProposalManagerOptions {
   adapter?: GitWorktreeAdapter
   limits?: Partial<ChangeProposalLimits>
@@ -111,6 +149,7 @@ export class ChangeProposalManager {
   private readonly sessions = new Map<string, AnalysisSession>()
   private readonly proposals = new Map<string, ChangeProposal>()
   private readonly patches = new Map<string, StoredPatchDraft>()
+  private readonly commits = new Map<string, StoredCommitDraft>()
   private readonly config: RepoAtlasConfig
   private readonly adapter: GitWorktreeAdapter
   private readonly limits: ChangeProposalLimits
@@ -396,6 +435,160 @@ export class ChangeProposalManager {
     return recordVerification(proposal, draft.patch, verification)
   }
 
+  async prepareCommit(request: ChangeProposalCommitRequest, signal?: AbortSignal): Promise<ChangeProposalResult> {
+    if (signal?.aborted) return blockedResult('interrupted', 'commit preparation was interrupted before validation')
+    const proposal = this.proposals.get(request.proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal is unknown to the current session')
+    if (proposal.commit) return resultForWithCommit(proposal, 'this proposal already has a commit draft; terminal commit states are not replayable', proposal.commit)
+    if (proposal.status !== 'confirmed' || !proposal.worktree) return resultFor(proposal, 'commit preparation requires a confirmed proposal with a managed worktree')
+    if (!proposal.patch || proposal.patch.status !== 'applied' || proposal.patch.verificationStatus !== 'passed' || proposal.patch.verification?.status !== 'passed') {
+      return resultFor(proposal, 'commit preparation requires an applied patch with passed verification')
+    }
+
+    let inspected: InspectedWorktree
+    try {
+      inspected = await this.adapter.inspect(proposal.repositoryRoot, proposal.worktree, signal)
+    } catch (error) {
+      return resultFor(proposal, `commit worktree inspection failed: ${redactError(error)}`)
+    }
+    const expectedPaths = proposal.patch.summary.files.map((file) => file.relativePath)
+    if (inspected.identity !== proposal.worktree.identity) return resultFor(proposal, 'worktree identity no longer matches the session-owned worktree')
+    if (inspected.baseRevision !== proposal.baseRevision) return resultFor(proposal, 'worktree base revision no longer matches the proposal')
+    let changedPaths: string[]
+    try {
+      changedPaths = workspaceChangedPaths(proposal, inspected)
+    } catch (error) {
+      return resultFor(proposal, `commit worktree path mapping failed: ${redactError(error)}`)
+    }
+    if (!inspected.dirty || !samePathSet(changedPaths, expectedPaths)) return resultFor(proposal, 'commit preparation requires exactly the applied patch paths in the worktree')
+
+    const message = normalizeCommitMessage(request.commitMessage, this.limits.maxTextBytes)
+    if (!message.value) return resultFor(proposal, message.reason)
+    try {
+      repositoryRelativePaths(proposal)
+    } catch (error) {
+      return resultFor(proposal, `commit paths are outside the repository: ${redactError(error)}`)
+    }
+
+    const commit: ChangeProposalCommit = {
+      commitId: `commit-${randomUUID()}`,
+      confirmationDigest: '',
+      status: 'awaiting-confirmation',
+      message: message.value,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + this.limits.expirationMs).toISOString(),
+      executionStatus: 'commit-not-created',
+    }
+    commit.confirmationDigest = createCommitDigest(proposal, commit, expectedPaths)
+    proposal.commit = commit
+    proposal.operationStatus = 'commit-awaiting-confirmation'
+    this.commits.set(commit.commitId, { proposalId: proposal.proposalId, commit })
+    return resultForWithCommit(proposal, 'commit draft prepared; exact commit digest and host approval are required before local commit', commit)
+  }
+
+  async confirmCommit(
+    commitId: string,
+    confirmationDigest: string,
+    authorizer: ChangeProposalCommitAuthorizer | undefined,
+    execution?: ChangeProposalCommitExecution,
+    signal?: AbortSignal,
+  ): Promise<ChangeProposalResult> {
+    const draft = this.commits.get(commitId)
+    if (!draft) return blockedResult('blocked', 'commit draft is unknown to the current session')
+    const proposal = this.proposals.get(draft.proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal for this commit draft is no longer available')
+    if (draft.commit.status !== 'awaiting-confirmation') return resultForWithCommit(proposal, 'commit draft is no longer awaiting confirmation', draft.commit)
+    if (signal?.aborted) return updateCommitFailure(proposal, draft.commit, 'interrupted', 'commit confirmation was interrupted before approval', 'commit-not-created')
+    if (Date.now() >= Date.parse(draft.commit.expiresAt)) return updateCommitFailure(proposal, draft.commit, 'blocked', 'commit confirmation window has expired', 'commit-not-created')
+    if (!sameDigest(draft.commit.confirmationDigest, confirmationDigest)) return resultForWithCommit(proposal, 'commit confirmation digest does not match the pending draft', draft.commit)
+    if (proposal.status !== 'confirmed' || !proposal.worktree || !proposal.patch || proposal.patch.status !== 'applied' || proposal.patch.verificationStatus !== 'passed' || proposal.patch.verification?.status !== 'passed') {
+      return updateCommitFailure(proposal, draft.commit, 'blocked', 'commit requires a confirmed proposal with an applied, passed-verified patch', 'commit-not-created')
+    }
+
+    let inspected: InspectedWorktree
+    try {
+      inspected = await this.adapter.inspect(proposal.repositoryRoot, proposal.worktree, signal)
+    } catch (error) {
+      return updateCommitFailure(proposal, draft.commit, 'blocked', `live commit worktree inspection failed: ${redactError(error)}`, 'commit-not-created')
+    }
+    const expectedPaths = proposal.patch.summary.files.map((file) => file.relativePath)
+    let changedPaths: string[]
+    try {
+      changedPaths = workspaceChangedPaths(proposal, inspected)
+    } catch (error) {
+      return updateCommitFailure(proposal, draft.commit, 'blocked', `commit worktree path mapping failed: ${redactError(error)}`, 'commit-not-created')
+    }
+    if (inspected.identity !== proposal.worktree.identity || inspected.baseRevision !== proposal.baseRevision || !inspected.dirty || !samePathSet(changedPaths, expectedPaths)) {
+      return updateCommitFailure(proposal, draft.commit, 'blocked', 'commit preconditions no longer match the applied patch', 'commit-not-created')
+    }
+    let paths: string[]
+    try {
+      paths = repositoryRelativePaths(proposal)
+    } catch (error) {
+      return updateCommitFailure(proposal, draft.commit, 'blocked', `commit paths are outside the repository: ${redactError(error)}`, 'commit-not-created')
+    }
+    if (!authorizer) return updateCommitFailure(proposal, draft.commit, 'blocked', 'commit approval capability is unavailable', 'commit-not-created')
+
+    let approval: ChangeProposalCommitApproval
+    try {
+      approval = await authorizer.authorize({
+        commitId: draft.commit.commitId,
+        confirmationDigest: draft.commit.confirmationDigest,
+        commitMessage: draft.commit.message,
+        worktree: proposal.worktree,
+        execution,
+        signal,
+      })
+    } catch (error) {
+      return resultForWithCommit(proposal, `commit approval failed closed: ${redactError(error)}`, draft.commit)
+    }
+    if (!approval.allowed) return resultForWithCommit(proposal, approval.reason || 'commit approval was rejected; the draft remains awaiting confirmation', draft.commit)
+    if (!approval.auditId) return updateCommitFailure(proposal, draft.commit, 'blocked', 'commit approval did not provide an audit id', 'commit-not-created')
+    draft.commit.approvalAuditId = boundedRedactedText(approval.auditId, this.limits.maxTextBytes)
+
+    let revision: string
+    try {
+      revision = await this.adapter.commit(proposal.repositoryRoot, proposal.worktree, paths, draft.commit.message, signal)
+    } catch (error) {
+      const uncertain = error instanceof CommitOperationError && error.uncertain
+      return updateCommitFailure(
+        proposal,
+        draft.commit,
+        signal?.aborted ? 'interrupted' : 'blocked',
+        `isolated commit failed${uncertain ? '; commit result is unknown and the worktree was retained' : ''}: ${redactError(error)}`,
+        uncertain ? 'commit-creation-unknown' : 'commit-not-created',
+      )
+    }
+
+    let after: InspectedWorktree
+    try {
+      after = await this.adapter.inspect(proposal.repositoryRoot, proposal.worktree, signal)
+    } catch (error) {
+      return updateCommitFailure(proposal, draft.commit, signal?.aborted ? 'interrupted' : 'blocked', `commit postcondition inspection failed; result is unknown and the worktree was retained: ${redactError(error)}`, 'commit-creation-unknown')
+    }
+    if (after.identity !== proposal.worktree.identity || after.baseRevision !== revision || after.dirty || after.changedPaths.length > 0) {
+      return updateCommitFailure(proposal, draft.commit, signal?.aborted ? 'interrupted' : 'blocked', 'commit postcondition did not prove a clean worktree at the returned revision; result is unknown and the worktree was retained', 'commit-creation-unknown')
+    }
+    draft.commit.status = 'created'
+    draft.commit.executionStatus = 'commit-created'
+    draft.commit.revision = revision
+    proposal.executionStatus.commit = 'commit-created'
+    proposal.operationStatus = 'commit-created'
+    proposal.commitCreated = true
+    return resultForWithCommit(proposal, 'local commit created in the isolated worktree; source workspace and remote were not modified', draft.commit)
+  }
+
+  rejectCommit(commitId: string): ChangeProposalResult {
+    const draft = this.commits.get(commitId)
+    if (!draft) return blockedResult('blocked', 'commit draft is unknown to the current session')
+    const proposal = this.proposals.get(draft.proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal for this commit draft is no longer available')
+    if (draft.commit.status !== 'awaiting-confirmation') return resultForWithCommit(proposal, 'commit draft is no longer awaiting confirmation', draft.commit)
+    draft.commit.status = 'rejected'
+    proposal.operationStatus = 'commit-rejected'
+    return resultForWithCommit(proposal, 'commit draft rejected; no Git commit was created', draft.commit)
+  }
+
   reject(proposalId: string): ChangeProposalResult {
     const proposal = this.proposals.get(proposalId)
     if (!proposal) return blockedResult('blocked', 'proposal is unknown to the current session')
@@ -440,7 +633,7 @@ export function createNodeGitWorktreeAdapter(): GitWorktreeAdapter {
         const worktree: ChangeProposalWorktree = {
           path: canonicalTarget,
           baseRevision,
-          identity: worktreeIdentity(canonicalTarget, baseRevision),
+          identity: worktreeIdentity(canonicalTarget),
         }
         const inspected = await this.inspect(repositoryRoot, worktree, signal)
         if (inspected.identity !== worktree.identity) throw new Error('created worktree identity could not be verified')
@@ -454,16 +647,17 @@ export function createNodeGitWorktreeAdapter(): GitWorktreeAdapter {
       const listing = await runGit(['-C', repositoryRoot, 'worktree', 'list', '--porcelain'], repositoryRoot, signal)
       const canonicalTarget = await fs.realpath(worktree.path)
       const record = parseWorktreeListing(listing, canonicalTarget)
-      if (!record || record.baseRevision !== worktree.baseRevision) throw new Error('managed worktree is not present at the expected revision')
+      if (!record) throw new Error('managed worktree is not present at the expected path')
       const status = await runGit(['-C', worktree.path, 'status', '--porcelain', '--untracked-files=all'], worktree.path, signal)
       const trackedChanges = await runGit(['-C', worktree.path, 'diff', '--name-only', '--no-ext-diff'], worktree.path, signal)
+      const stagedChanges = await runGit(['-C', worktree.path, 'diff', '--cached', '--name-only', '--no-ext-diff'], worktree.path, signal)
       const untrackedChanges = await runGit(['-C', worktree.path, 'ls-files', '--others', '--exclude-standard'], worktree.path, signal)
       return {
-        ...worktree,
         path: canonicalTarget,
-        identity: worktreeIdentity(canonicalTarget, record.baseRevision),
+        identity: worktreeIdentity(canonicalTarget),
+        baseRevision: record.baseRevision,
         dirty: status.length > 0,
-        changedPaths: uniquePaths([...trackedChanges.split('\n'), ...untrackedChanges.split('\n')]),
+        changedPaths: uniquePaths([...trackedChanges.split('\n'), ...stagedChanges.split('\n'), ...untrackedChanges.split('\n')]),
       }
     },
     async applyPatch(_repositoryRoot, worktree, patchText, workspaceRelativeRoot, signal) {
@@ -474,6 +668,25 @@ export function createNodeGitWorktreeAdapter(): GitWorktreeAdapter {
         await runGitWithInput(['-C', patchCwd, 'apply', '--whitespace=error'], patchCwd, patchText, signal)
       } catch (error) {
         throw new PatchApplicationError(redactError(error), true)
+      }
+    },
+    async commit(_repositoryRoot, worktree, repositoryRelativePaths, commitMessage, signal) {
+      const paths = uniquePaths(repositoryRelativePaths)
+      if (paths.length === 0 || paths.some((value) => !isSafeRepositoryRelativePath(value))) {
+        throw new CommitOperationError('commit paths are empty or outside the repository', false)
+      }
+      try {
+        await runGit(['-C', worktree.path, 'add', '--', ...paths], worktree.path, signal)
+        const staged = uniquePaths((await runGit(['-C', worktree.path, 'diff', '--cached', '--name-only', '--no-ext-diff'], worktree.path, signal)).split('\n'))
+        if (!samePathSet(staged, paths)) throw new Error('staged path set does not exactly match the declared commit paths')
+      } catch (error) {
+        throw new CommitOperationError(`commit staging failed: ${redactError(error)}`, false)
+      }
+      try {
+        await runGit(['-C', worktree.path, '-c', 'commit.gpgSign=false', 'commit', '--no-verify', '--no-gpg-sign', '-m', commitMessage], worktree.path, signal)
+        return await runGit(['-C', worktree.path, 'rev-parse', '--verify', 'HEAD^{commit}'], worktree.path, signal)
+      } catch (error) {
+        throw new CommitOperationError(`local commit result is unknown: ${redactError(error)}`, true)
       }
     },
     async remove(repositoryRoot, worktree, signal) {
@@ -560,8 +773,8 @@ function sameDigest(expected: string, received: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right)
 }
 
-function worktreeIdentity(worktreePath: string, baseRevision: string): string {
-  return createHash('sha256').update(`${path.resolve(worktreePath)}\0${baseRevision}`).digest('hex').slice(0, 32)
+function worktreeIdentity(worktreePath: string): string {
+  return createHash('sha256').update(path.resolve(worktreePath)).digest('hex').slice(0, 32)
 }
 
 function parseWorktreeListing(listing: string, targetPath: string): { path: string; baseRevision: string } | undefined {
@@ -769,6 +982,22 @@ function createPatchDigest(proposal: ChangeProposal, patch: ChangeProposalPatch,
   return createHash('sha256').update(payload).digest('hex')
 }
 
+function createCommitDigest(proposal: ChangeProposal, commit: ChangeProposalCommit, expectedWorkspacePaths: readonly string[]): string {
+  const payload = JSON.stringify({
+    commitId: commit.commitId,
+    proposalId: proposal.proposalId,
+    patchId: proposal.patch?.patchId,
+    patchDigest: proposal.patch?.confirmationDigest,
+    verificationId: proposal.patch?.verification?.verificationId,
+    verificationStatus: proposal.patch?.verification?.status,
+    baseRevision: proposal.baseRevision,
+    worktreeIdentity: proposal.worktree?.identity,
+    expectedWorkspacePaths: [...expectedWorkspacePaths].sort(),
+    commitMessage: commit.message,
+  })
+  return createHash('sha256').update(payload).digest('hex')
+}
+
 function updatePatchFailure(
   proposal: ChangeProposal,
   patch: ChangeProposalPatch,
@@ -781,6 +1010,20 @@ function updatePatchFailure(
   proposal.executionStatus.patch = executionStatus
   proposal.operationStatus = 'blocked'
   return resultFor(proposal, reason)
+}
+
+function updateCommitFailure(
+  proposal: ChangeProposal,
+  commit: ChangeProposalCommit,
+  status: 'blocked' | 'interrupted',
+  reason: string,
+  executionStatus: ChangeProposalCommitExecutionStatus,
+): ChangeProposalResult {
+  commit.status = status
+  commit.executionStatus = executionStatus
+  proposal.executionStatus.commit = executionStatus
+  proposal.operationStatus = status === 'interrupted' ? 'commit-interrupted' : 'commit-blocked'
+  return resultForWithCommit(proposal, reason, commit)
 }
 
 function recordVerification(
@@ -796,6 +1039,10 @@ function recordVerification(
 
 function resultForWithVerification(proposal: ChangeProposal, reason: string, verification: ChangeProposalVerification): ChangeProposalResult {
   return { ...resultFor(proposal, reason), verification: { ...verification } }
+}
+
+function resultForWithCommit(proposal: ChangeProposal, reason: string, commit: ChangeProposalCommit): ChangeProposalResult {
+  return { ...resultFor(proposal, reason), commit: { ...commit } }
 }
 
 function verificationOperationStatus(status: ChangeProposalVerification['status']): ChangeProposal['operationStatus'] {
@@ -865,8 +1112,35 @@ function workspaceChangedPaths(proposal: ChangeProposal, inspected: InspectedWor
   return uniquePaths(result)
 }
 
+function repositoryRelativePaths(proposal: ChangeProposal): string[] {
+  if (!proposal.patch) throw new Error('proposal has no patch')
+  const repositoryRoot = path.resolve(proposal.repositoryRoot)
+  const workspaceRoot = path.resolve(proposal.workspaceRoot)
+  const paths = proposal.patch.summary.files.map((file) => {
+    const absolute = path.resolve(workspaceRoot, file.relativePath)
+    if (!isWithin(workspaceRoot, absolute) || !isWithin(repositoryRoot, absolute) || absolute === repositoryRoot) throw new Error(`invalid repository path: ${file.relativePath}`)
+    const relative = path.relative(repositoryRoot, absolute).replaceAll(path.sep, '/')
+    if (!isSafeRepositoryRelativePath(relative)) throw new Error(`invalid repository path: ${file.relativePath}`)
+    return relative
+  })
+  return uniquePaths(paths)
+}
+
 function uniquePaths(values: readonly string[]): string[] {
   return [...new Set(values.filter((value) => value.length > 0).map((value) => value.replaceAll('\\', '/')))]
+}
+
+function isSafeRepositoryRelativePath(value: string): boolean {
+  return value.length > 0 && value !== '.' && !value.startsWith('/') && value !== '..' && !value.startsWith('../') && !value.includes('\0')
+}
+
+function normalizeCommitMessage(value: unknown, maxBytes: number): { value?: string; reason: string } {
+  if (typeof value !== 'string' || !value.trim()) return { reason: 'a non-empty commit message is required' }
+  const message = value.replaceAll('\r\n', '\n').replaceAll('\r', '\n').trim()
+  if (message.includes('\0')) return { reason: 'commit message contains a NUL byte' }
+  if (Buffer.byteLength(message) > maxBytes) return { reason: 'commit message byte budget exhausted' }
+  if (redactSecretLike(message).redacted) return { reason: 'commit message contains secret-like content and was rejected' }
+  return { value: message, reason: 'commit message is valid' }
 }
 
 function boundedRedactedText(value: string, maxBytes: number): string {
@@ -914,6 +1188,7 @@ function cloneProposal(proposal: ChangeProposal): ChangeProposal {
     limitations: [...proposal.limitations],
     risks: [...proposal.risks],
     worktree: proposal.worktree ? { ...proposal.worktree } : undefined,
+    commit: proposal.commit ? { ...proposal.commit } : undefined,
     patch: proposal.patch ? {
       ...proposal.patch,
       limitations: [...proposal.patch.limitations],

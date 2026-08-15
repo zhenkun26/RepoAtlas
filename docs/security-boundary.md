@@ -22,6 +22,16 @@ verification 只能指向已应用、仍由当前 session 拥有且 identity/bas
 
 verification stdout/stderr 继续受 recipe 输出预算限制并执行 Secret-like 脱敏。verification status 与 `patch-applied`、`commit-not-created`、`push-not-performed` 分离；失败、中止、超时、sandbox 不可用或 postcondition 不确定时，不把 patch 报告为未应用，不执行逆补丁、`git clean`、force rollback 或 release。
 
+## v2.3 isolated worktree commit
+
+v2.3 只允许对当前 session 中已应用且 verification=passed 的 patch 准备 commit draft。commit message 必须由调用方显式提供、非空、bounded 且不含 Secret-like 内容；prepare 只写 session memory，不触碰 Git index、worktree、source workspace 或 remote。
+
+confirm 必须提供完全匹配的 commit digest，并通过 Harness active+armed Goal 与一次性 `allowed-once` approval。实时检查必须确认 worktree identity、原始 base revision 和 changed path set 仍匹配 patch targets；任何额外或缺失路径都会 fail closed。
+
+Git adapter 只执行固定的本地 path-limited staging 和 commit：`shell:false`、`--no-verify`、`--no-gpg-sign`，不接受 remote、push、merge、branch、amend、author、hook 或任意 Shell 输入。source workspace 永远不参与 commit。
+
+成功 commit 后必须证明 returned HEAD revision、stable worktree identity 和 clean worktree；否则返回 `commit-creation-unknown`，保留 worktree，不执行 reset、unstage、`git clean`、逆补丁或 force remove。成功结果仍明确标记 `push-not-performed`，既有 safe release 只允许释放干净且 identity 匹配的 session-owned worktree。
+
 ## 路径与文件
 
 - workspace 根目录先规范化；包含 `..` 的请求直接拒绝。
@@ -46,4 +56,4 @@ AST 只处理已确认 scope 内的 `.ts`、`.tsx`、`.js`、`.jsx` 脱敏文本
 
 ## 回滚
 
-RepoAtlas 是无迁移的插件。停用 Harness profile 或移除本项目目录即可回滚，不需要恢复数据库或远程配置。v2.2 的 session-only patch/export/verification registry 随进程结束丢弃；孤儿 worktree 仍按 v2.1 的人工检查和清理路径处理，工具不会跨 session 自动接管或删除。
+RepoAtlas 是无迁移的插件。停用 Harness profile 或移除本项目目录即可回滚，不需要恢复数据库或远程配置。v2.3 的 session-only patch/export/verification/commit registry 随进程结束丢弃；isolated commit 只存在于 session-owned detached worktree，source workspace 和 remote 不会被工具回写。孤儿 worktree 仍按人工检查和清理路径处理，工具不会跨 session 自动接管或删除。

@@ -8,7 +8,7 @@ import { promisify } from 'node:util'
 import { ChangeProposalManager, createNodeGitWorktreeAdapter, type ChangeProposalVerificationRunner, type GitWorktreeAdapter } from '../src/repository/change-proposal.ts'
 import { createConfig } from '../src/config.ts'
 import { createEvidence } from '../src/evidence.ts'
-import type { AnalysisSession, ChangeProposalRequest, ChangeProposalVerification, ChangeProposalWorktree } from '../src/types.ts'
+import type { AnalysisSession, ChangeProposalRequest, ChangeProposalResult, ChangeProposalVerification, ChangeProposalWorktree } from '../src/types.ts'
 
 const execFileAsync = promisify(execFile)
 const fixtureRoot = path.resolve('test/fixtures/complete-repo')
@@ -17,10 +17,14 @@ class FakeGitAdapter implements GitWorktreeAdapter {
   createCount = 0
   removeCount = 0
   applyPatchCount = 0
+  commitCount = 0
+  commitRevision = 'commit-1'
   dirty = false
   changedPaths: string[] = []
   failDiscovery = false
   failPatch = false
+  failCommit = false
+  failCommitPostcondition = false
   failPostcondition = false
   identityMismatch = false
 
@@ -35,8 +39,8 @@ class FakeGitAdapter implements GitWorktreeAdapter {
   }
 
   async inspect(_repositoryRoot: string, worktree: ChangeProposalWorktree): Promise<ChangeProposalWorktree & { dirty: boolean; changedPaths: string[] }> {
-    if (this.failPostcondition && this.applyPatchCount > 0) throw new Error('postcondition inspection unavailable')
-    return { ...worktree, identity: this.identityMismatch ? 'identity-mismatch' : worktree.identity, dirty: this.dirty, changedPaths: [...this.changedPaths] }
+    if ((this.failPostcondition && this.applyPatchCount > 0) || (this.failCommitPostcondition && this.commitCount > 0)) throw new Error('postcondition inspection unavailable')
+    return { ...worktree, baseRevision: this.commitCount > 0 ? this.commitRevision : worktree.baseRevision, identity: this.identityMismatch ? 'identity-mismatch' : worktree.identity, dirty: this.dirty, changedPaths: [...this.changedPaths] }
   }
 
   async applyPatch(): Promise<void> {
@@ -44,6 +48,14 @@ class FakeGitAdapter implements GitWorktreeAdapter {
     if (this.failPatch) throw new Error('patch rejected by fake Git')
     this.dirty = true
     this.changedPaths = ['src/index.ts']
+  }
+
+  async commit(): Promise<string> {
+    this.commitCount += 1
+    if (this.failCommit) throw new Error('commit rejected by fake Git')
+    this.dirty = false
+    this.changedPaths = []
+    return this.commitRevision
   }
 
   async remove(): Promise<void> {
@@ -103,6 +115,15 @@ function validPatch(replacement = 'new'): string {
 -old
 +${replacement}
 `
+}
+
+async function prepareVerifiedCommitDraft(manager: ChangeProposalManager, runner: ChangeProposalVerificationRunner, recipeId: string): Promise<ChangeProposalResult> {
+  const pending = await manager.prepare(request())
+  const confirmed = await manager.confirm(pending.proposal?.proposalId ?? '', pending.proposal?.confirmationDigest ?? '')
+  const patchDraft = await manager.preparePatch({ proposalId: confirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  const applied = await manager.confirmPatch(patchDraft.proposal?.patch?.patchId ?? '', patchDraft.proposal?.patch?.confirmationDigest ?? '')
+  const verified = await manager.verifyPatch({ patchId: applied.proposal?.patch?.patchId ?? '', confirmationDigest: applied.proposal?.patch?.confirmationDigest ?? '', recipeId }, runner)
+  return manager.prepareCommit({ proposalId: verified.proposal?.proposalId ?? '', commitMessage: `feat: ${recipeId}` })
 }
 
 test('proposal lifecycle requires exact confirmation and releases a clean owned worktree', async () => {
@@ -341,6 +362,214 @@ test('patch verification is digest-bound, read-only at the manager boundary, and
   assert.equal(runnerCalls, 1)
 })
 
+test('isolated commit lifecycle requires passed verification, exact digest, approval, and clean postcondition', async () => {
+  const adapter = new FakeGitAdapter()
+  let verificationCalls = 0
+  const runner: ChangeProposalVerificationRunner = {
+    async run({ recipeId, worktree }): Promise<ChangeProposalVerification> {
+      verificationCalls += 1
+      return {
+        verificationId: `verification-commit-${verificationCalls}`,
+        auditId: `audit-commit-${verificationCalls}`,
+        recipeId,
+        status: 'passed',
+        reason: 'verification passed',
+        worktreeIdentity: worktree.identity,
+        stdout: 'ok',
+        stderr: '',
+        outputTruncated: false,
+        redacted: false,
+        redactedMatchCount: 0,
+        exitCode: 0,
+        signal: null,
+        createdAt: new Date().toISOString(),
+      }
+    },
+  }
+  const authorizer = {
+    authorize: async () => ({ allowed: true, auditId: 'commit-approval-1', reason: 'approved' }),
+  }
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+  const pending = await manager.prepare(request())
+  const confirmed = await manager.confirm(pending.proposal?.proposalId ?? '', pending.proposal?.confirmationDigest ?? '')
+  const patchDraft = await manager.preparePatch({ proposalId: confirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  const applied = await manager.confirmPatch(patchDraft.proposal?.patch?.patchId ?? '', patchDraft.proposal?.patch?.confirmationDigest ?? '')
+  const verified = await manager.verifyPatch({
+    patchId: applied.proposal?.patch?.patchId ?? '',
+    confirmationDigest: applied.proposal?.patch?.confirmationDigest ?? '',
+    recipeId: 'commit-test',
+  }, runner)
+  const secretMessage = await manager.prepareCommit({ proposalId: verified.proposal?.proposalId ?? '', commitMessage: 'token=not-a-commit-message' })
+  assert.equal(secretMessage.proposal?.commit, undefined)
+  const oversizedMessage = await manager.prepareCommit({ proposalId: verified.proposal?.proposalId ?? '', commitMessage: 'x'.repeat(5_000) })
+  assert.equal(oversizedMessage.proposal?.commit, undefined)
+  const draft = await manager.prepareCommit({ proposalId: verified.proposal?.proposalId ?? '', commitMessage: 'feat: isolated change' })
+
+  assert.equal(draft.proposal?.commit?.status, 'awaiting-confirmation')
+  assert.equal(draft.proposal?.executionStatus.commit, 'commit-not-created')
+  assert.equal(draft.commit?.confirmationDigest, draft.proposal?.commit?.confirmationDigest)
+  assert.equal(adapter.commitCount, 0)
+
+  const mismatch = await manager.confirmCommit(draft.proposal?.commit?.commitId ?? '', '0'.repeat(64), authorizer)
+  assert.equal(mismatch.proposal?.commit?.status, 'awaiting-confirmation')
+  assert.equal(adapter.commitCount, 0)
+
+  const created = await manager.confirmCommit(
+    draft.proposal?.commit?.commitId ?? '',
+    draft.proposal?.commit?.confirmationDigest ?? '',
+    authorizer,
+    { callId: 'commit-call', agent: { session: { header: { cwd: fixtureRoot } } } },
+  )
+  assert.equal(created.status, 'confirmed')
+  assert.equal(created.operationStatus, 'commit-created')
+  assert.equal(created.proposal?.commit?.status, 'created')
+  assert.equal(created.proposal?.commit?.executionStatus, 'commit-created')
+  assert.equal(created.proposal?.commit?.approvalAuditId, 'commit-approval-1')
+  assert.equal(created.proposal?.commit?.revision, 'commit-1')
+  assert.equal(created.proposal?.commitCreated, true)
+  assert.equal(created.proposal?.executionStatus.commit, 'commit-created')
+  assert.equal(created.proposal?.executionStatus.push, 'push-not-performed')
+  assert.equal(adapter.commitCount, 1)
+
+  const replay = await manager.confirmCommit(draft.proposal?.commit?.commitId ?? '', draft.proposal?.commit?.confirmationDigest ?? '', authorizer)
+  assert.equal(replay.proposal?.commit?.status, 'created')
+  assert.equal(adapter.commitCount, 1)
+  const released = await manager.release(draft.proposal?.proposalId ?? '')
+  assert.equal(released.status, 'released')
+  assert.equal(adapter.removeCount, 1)
+})
+
+test('isolated commit blocks unverified, rejected, expired, failed, and uncertain states without cleanup', async () => {
+  const unavailableAdapter = new FakeGitAdapter()
+  const unavailableManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: unavailableAdapter })
+  unavailableManager.registerSession(createSession())
+  const unavailablePending = await unavailableManager.prepare(request())
+  const unavailableConfirmed = await unavailableManager.confirm(unavailablePending.proposal?.proposalId ?? '', unavailablePending.proposal?.confirmationDigest ?? '')
+  const unavailable = await unavailableManager.prepareCommit({ proposalId: unavailableConfirmed.proposal?.proposalId ?? '', commitMessage: 'feat: not verified' })
+  assert.equal(unavailable.proposal?.commit, undefined)
+  assert.match(unavailable.reason, /passed verification/)
+
+  const runner: ChangeProposalVerificationRunner = {
+    async run({ recipeId, worktree }): Promise<ChangeProposalVerification> {
+      return {
+        verificationId: 'verification-failure',
+        auditId: 'audit-failure',
+        recipeId,
+        status: 'failed',
+        reason: 'verification failed',
+        worktreeIdentity: worktree.identity,
+        stdout: '',
+        stderr: 'failed',
+        outputTruncated: false,
+        redacted: false,
+        redactedMatchCount: 0,
+        createdAt: new Date().toISOString(),
+      }
+    },
+  }
+  const rejectedAdapter = new FakeGitAdapter()
+  const rejectedManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: rejectedAdapter })
+  rejectedManager.registerSession(createSession())
+  const rejectedPending = await rejectedManager.prepare(request())
+  const rejectedConfirmed = await rejectedManager.confirm(rejectedPending.proposal?.proposalId ?? '', rejectedPending.proposal?.confirmationDigest ?? '')
+  const rejectedPatch = await rejectedManager.preparePatch({ proposalId: rejectedConfirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  const rejectedApplied = await rejectedManager.confirmPatch(rejectedPatch.proposal?.patch?.patchId ?? '', rejectedPatch.proposal?.patch?.confirmationDigest ?? '')
+  const rejectedVerified = await rejectedManager.verifyPatch({ patchId: rejectedApplied.proposal?.patch?.patchId ?? '', confirmationDigest: rejectedApplied.proposal?.patch?.confirmationDigest ?? '', recipeId: 'failure' }, runner)
+  assert.equal(rejectedVerified.proposal?.patch?.verificationStatus, 'failed')
+  assert.equal((await rejectedManager.prepareCommit({ proposalId: rejectedVerified.proposal?.proposalId ?? '', commitMessage: 'feat: rejected' })).proposal?.commit, undefined)
+
+  const happyRunner: ChangeProposalVerificationRunner = {
+    async run({ recipeId, worktree }): Promise<ChangeProposalVerification> {
+      return {
+        verificationId: `verification-${recipeId}`,
+        auditId: `audit-${recipeId}`,
+        recipeId,
+        status: 'passed',
+        reason: 'verification passed',
+        worktreeIdentity: worktree.identity,
+        stdout: 'ok',
+        stderr: '',
+        outputTruncated: false,
+        redacted: false,
+        redactedMatchCount: 0,
+        exitCode: 0,
+        signal: null,
+        createdAt: new Date().toISOString(),
+      }
+    },
+  }
+  const abortedAdapter = new FakeGitAdapter()
+  const abortedManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: abortedAdapter })
+  abortedManager.registerSession(createSession())
+  const abortedDraft = await prepareVerifiedCommitDraft(abortedManager, happyRunner, 'aborted')
+  const abortedController = new AbortController()
+  abortedController.abort()
+  const interrupted = await abortedManager.confirmCommit(abortedDraft.proposal?.commit?.commitId ?? '', abortedDraft.proposal?.commit?.confirmationDigest ?? '', { authorize: async () => ({ allowed: true, auditId: 'must-not-use', reason: 'must not use' }) }, undefined, abortedController.signal)
+  assert.equal(interrupted.proposal?.commit?.status, 'interrupted')
+  assert.equal(interrupted.proposal?.commit?.executionStatus, 'commit-not-created')
+  assert.equal(abortedAdapter.commitCount, 0)
+
+  const expiringAdapter = new FakeGitAdapter()
+  const expiringManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: expiringAdapter, limits: { expirationMs: 25 } })
+  expiringManager.registerSession(createSession())
+  const expiringDraft = await prepareVerifiedCommitDraft(expiringManager, happyRunner, 'expired')
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  const expired = await expiringManager.confirmCommit(expiringDraft.proposal?.commit?.commitId ?? '', expiringDraft.proposal?.commit?.confirmationDigest ?? '', { authorize: async () => ({ allowed: true, auditId: 'must-not-use', reason: 'must not use' }) })
+  assert.equal(expired.proposal?.commit?.status, 'blocked')
+  assert.equal(expired.proposal?.commit?.executionStatus, 'commit-not-created')
+  assert.equal(expiringAdapter.commitCount, 0)
+
+  const deniedAdapter = new FakeGitAdapter()
+  const deniedManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: deniedAdapter })
+  deniedManager.registerSession(createSession())
+  const deniedPending = await deniedManager.prepare(request())
+  const deniedConfirmed = await deniedManager.confirm(deniedPending.proposal?.proposalId ?? '', deniedPending.proposal?.confirmationDigest ?? '')
+  const deniedPatch = await deniedManager.preparePatch({ proposalId: deniedConfirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  const deniedApplied = await deniedManager.confirmPatch(deniedPatch.proposal?.patch?.patchId ?? '', deniedPatch.proposal?.patch?.confirmationDigest ?? '')
+  const deniedVerified = await deniedManager.verifyPatch({ patchId: deniedApplied.proposal?.patch?.patchId ?? '', confirmationDigest: deniedApplied.proposal?.patch?.confirmationDigest ?? '', recipeId: 'denied' }, happyRunner)
+  const deniedDraft = await deniedManager.prepareCommit({ proposalId: deniedVerified.proposal?.proposalId ?? '', commitMessage: 'feat: denied approval' })
+  const denied = await deniedManager.confirmCommit(deniedDraft.proposal?.commit?.commitId ?? '', deniedDraft.proposal?.commit?.confirmationDigest ?? '', { authorize: async () => ({ allowed: false, reason: 'user rejected' }) })
+  assert.equal(denied.proposal?.commit?.status, 'awaiting-confirmation')
+  assert.equal(deniedAdapter.commitCount, 0)
+  const rejected = deniedManager.rejectCommit(deniedDraft.proposal?.commit?.commitId ?? '')
+  assert.equal(rejected.proposal?.commit?.status, 'rejected')
+  const rejectedReplay = await deniedManager.confirmCommit(deniedDraft.proposal?.commit?.commitId ?? '', deniedDraft.proposal?.commit?.confirmationDigest ?? '', { authorize: async () => ({ allowed: true, auditId: 'must-not-use', reason: 'must not use' }) })
+  assert.equal(rejectedReplay.proposal?.commit?.status, 'rejected')
+  assert.equal(deniedAdapter.commitCount, 0)
+
+  const failingAdapter = new FakeGitAdapter()
+  failingAdapter.failCommit = true
+  const failingManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: failingAdapter })
+  failingManager.registerSession(createSession())
+  const failingPending = await failingManager.prepare(request())
+  const failingConfirmed = await failingManager.confirm(failingPending.proposal?.proposalId ?? '', failingPending.proposal?.confirmationDigest ?? '')
+  const failingPatch = await failingManager.preparePatch({ proposalId: failingConfirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  const failingApplied = await failingManager.confirmPatch(failingPatch.proposal?.patch?.patchId ?? '', failingPatch.proposal?.patch?.confirmationDigest ?? '')
+  const failingVerified = await failingManager.verifyPatch({ patchId: failingApplied.proposal?.patch?.patchId ?? '', confirmationDigest: failingApplied.proposal?.patch?.confirmationDigest ?? '', recipeId: 'failing' }, happyRunner)
+  const failingDraft = await failingManager.prepareCommit({ proposalId: failingVerified.proposal?.proposalId ?? '', commitMessage: 'feat: failing commit' })
+  const failed = await failingManager.confirmCommit(failingDraft.proposal?.commit?.commitId ?? '', failingDraft.proposal?.commit?.confirmationDigest ?? '', { authorize: async () => ({ allowed: true, auditId: 'approval-fail', reason: 'approved' }) })
+  assert.equal(failed.proposal?.commit?.status, 'blocked')
+  assert.equal(failed.proposal?.commit?.executionStatus, 'commit-not-created')
+  assert.equal((await failingManager.release(failingDraft.proposal?.proposalId ?? '')).status, 'blocked')
+  assert.equal(failingAdapter.removeCount, 0)
+
+  const uncertainAdapter = new FakeGitAdapter()
+  uncertainAdapter.failCommitPostcondition = true
+  const uncertainManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: uncertainAdapter })
+  uncertainManager.registerSession(createSession())
+  const uncertainPending = await uncertainManager.prepare(request())
+  const uncertainConfirmed = await uncertainManager.confirm(uncertainPending.proposal?.proposalId ?? '', uncertainPending.proposal?.confirmationDigest ?? '')
+  const uncertainPatch = await uncertainManager.preparePatch({ proposalId: uncertainConfirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  const uncertainApplied = await uncertainManager.confirmPatch(uncertainPatch.proposal?.patch?.patchId ?? '', uncertainPatch.proposal?.patch?.confirmationDigest ?? '')
+  const uncertainVerified = await uncertainManager.verifyPatch({ patchId: uncertainApplied.proposal?.patch?.patchId ?? '', confirmationDigest: uncertainApplied.proposal?.patch?.confirmationDigest ?? '', recipeId: 'uncertain' }, happyRunner)
+  const uncertainDraft = await uncertainManager.prepareCommit({ proposalId: uncertainVerified.proposal?.proposalId ?? '', commitMessage: 'feat: uncertain commit' })
+  const uncertain = await uncertainManager.confirmCommit(uncertainDraft.proposal?.commit?.commitId ?? '', uncertainDraft.proposal?.commit?.confirmationDigest ?? '', { authorize: async () => ({ allowed: true, auditId: 'approval-uncertain', reason: 'approved' }) })
+  assert.equal(uncertain.proposal?.commit?.status, 'blocked')
+  assert.equal(uncertain.proposal?.commit?.executionStatus, 'commit-creation-unknown')
+  assert.equal(uncertainAdapter.removeCount, 0)
+})
+
 test('patch verification fails closed for missing runner, abort, and unexpected worktree changes', async () => {
   const adapter = new FakeGitAdapter()
   const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
@@ -537,7 +766,15 @@ test('node Git adapter creates and removes a detached worktree without network a
     const patched = await adapter.inspect(revision.repositoryRoot, worktree)
     assert.equal(patched.dirty, true)
     assert.deepEqual(patched.changedPaths, ['README.md'])
-    await fs.writeFile(path.join(worktree.path, 'README.md'), 'fixture\n')
+    const commitRevision = await adapter.commit(revision.repositoryRoot, worktree, ['README.md'], 'feat: isolated fixture change')
+    assert.match(commitRevision, /^[0-9a-f]{40}$/)
+    assert.equal(await fs.readFile(path.join(root, 'README.md'), 'utf8'), 'fixture\n')
+    assert.equal(await fs.readFile(path.join(worktree.path, 'README.md'), 'utf8'), 'patched\n')
+    const committed = await adapter.inspect(revision.repositoryRoot, worktree)
+    assert.equal(committed.dirty, false)
+    assert.deepEqual(committed.changedPaths, [])
+    assert.equal(committed.baseRevision, commitRevision)
+    assert.equal(committed.identity, worktree.identity)
     await adapter.remove(revision.repositoryRoot, worktree)
     await assert.rejects(() => fs.access(worktree.path))
   } finally {
