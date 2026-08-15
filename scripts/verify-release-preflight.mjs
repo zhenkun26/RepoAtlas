@@ -1,6 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import {
+  CANDIDATE_VERSION,
+  EXISTING_TAG,
+  evaluateReleaseContract,
+} from './release-contract.mjs'
 
 const repoRoot = resolve(process.cwd())
 const checks = []
@@ -64,6 +69,7 @@ const supportPolicy = readText('docs/support-policy.md', 'support-policy-missing
 const releaseProcess = readText('docs/release-process.md', 'release-process-missing')
 const readme = readText('README.md', 'readme-missing')
 const checklist = readText('docs/release-checklist.md', 'release-checklist-missing')
+const changelog = readText('CHANGELOG.md', 'changelog-missing')
 
 addCheck('mit-license', license.includes('MIT License') && license.includes('Copyright (c) 2026 Zhenkun26'), 'mit-license-mismatch')
 addCheck('attribution-notice', notice.includes('RepoAtlas / 代码星图') && notice.includes('github.com/zhenkun26/RepoAtlas'), 'attribution-notice-mismatch')
@@ -104,17 +110,35 @@ const checklistEvidence = [
 ]
 for (const [id, phrase, blocker] of checklistEvidence) addCheck(`checklist:${id}`, hasCheckedItem(checklist, phrase), blocker)
 
+const existingTagRevision = runGit(['rev-parse', '--verify', `refs/tags/${EXISTING_TAG}^{commit}`])
+const candidateTagRevision = runGit(['rev-parse', '--verify', `refs/tags/v${CANDIDATE_VERSION}^{commit}`])
+const releaseContract = evaluateReleaseContract({
+  packageMetadata,
+  changelogText: changelog,
+  readmeText: readme,
+  releaseProcessText: releaseProcess,
+  checklistText: checklist,
+  existingTagRevision,
+  candidateTagRevision,
+})
+for (const check of releaseContract.checks) addCheck(`release-contract:${check.id}`, check.status === 'pass', check.blocker)
+
 const uniqueBlockers = [...new Set(blockers)]
 const result = {
   status: uniqueBlockers.length === 0 ? 'ready' : 'blocked',
   revision: head ?? 'unknown',
   branch,
+  candidateVersion: CANDIDATE_VERSION,
+  existingTag: { name: EXISTING_TAG, revision: existingTagRevision ?? 'unknown' },
+  candidateTag: { name: `v${CANDIDATE_VERSION}`, revision: candidateTagRevision ?? 'not-created' },
   checks,
   blockers: uniqueBlockers,
   tagCreated: false,
   releaseCreated: false,
   publishPerformed: false,
   networkAccessed: false,
+  remoteReleaseObserved: false,
+  remoteMetadataMutationPerformed: false,
 }
 
 console.log(JSON.stringify(result, null, 2))

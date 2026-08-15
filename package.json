@@ -1,6 +1,6 @@
 {
   "name": "repo-atlas",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Safety-first, evidence-backed repository analysis and bounded change-lifecycle plugin for DeepSeek Harness; source-first and session-only by default.",

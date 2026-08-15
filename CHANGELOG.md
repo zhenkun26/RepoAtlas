@@ -1,10 +1,24 @@
 # Changelog
 
-All notable RepoAtlas changes will be documented here. Until the first public tag is created, entries are unreleased development history and do not imply an npm publication or a supported package version.
+All notable RepoAtlas changes will be documented here. The existing `v0.1.0` tag is an immutable historical source snapshot. The `[0.1.1]` section is the reviewed next source-first candidate until a maintainer separately authorizes a new tag and GitHub Release; neither section implies npm publication or a supported package version by itself.
 
 ## [Unreleased]
 
-No unreleased user-facing changes.
+No user-facing changes after the `0.1.1` candidate boundary.
+
+## [0.1.1] - Unreleased candidate
+
+### Added
+
+- v2.15 open-source showcase wording and package description for public project evaluation.
+- v2.16 bilingual English/Chinese README coverage for onboarding, safety, compatibility, distribution, and governance.
+- v2.17 source-first release-candidate alignment, immutable-tag evidence, and manual repository metadata handoff guidance.
+
+### Distribution and release status
+
+- This candidate remains source-first and keeps `private: true`; it is not an npm publication or compiled distribution.
+- The candidate must use a distinct future tag and must not move or overwrite the existing `v0.1.0` tag.
+- A local preflight result is advisory evidence and does not create a tag, GitHub Release, npm publication, deployment, or support SLA.
 
 ## [0.1.0] - 2026-08-15
 
@@ -29,4 +43,4 @@ No unreleased user-facing changes.
 
 ## Release policy
 
-The first public version will be associated with an explicit Git tag and release notes. Package publication, compiled distribution, support policy, and version compatibility are still separate decisions tracked in [the roadmap](docs/roadmap.md) and [the release checklist](docs/release-checklist.md).
+The existing `v0.1.0` tag points to the historical commit `455dbb61d5cabe032e3497ba4d9eeb9c39584662` and must remain unchanged. The reviewed next candidate is `0.1.1` on the current reviewed `main` descendant; its exact revision is rechecked immediately before any separately authorized tag or GitHub Release. Package publication, compiled distribution, support policy, and version compatibility remain separate decisions tracked in [the roadmap](docs/roadmap.md) and [the release checklist](docs/release-checklist.md).

@@ -144,6 +144,8 @@ RepoAtlas 继续采用 source-first：
 - No compiled `dist/` distribution is promised.<br>当前不承诺提供编译后的 `dist/` 分发包。
 - Git tags, GitHub Releases, and npm publication are separate release decisions. The current project documentation does not claim that an npm package exists.<br>Git tag、GitHub Release 和 npm publication 是相互独立的发布决策；当前项目文档不声称存在 npm 包。
 
+The current reviewed source candidate is `0.1.1` and remains unreleased. The immutable `v0.1.0` tag points to the earlier revision `455dbb61d5cabe032e3497ba4d9eeb9c39584662`; it must not be moved or overwritten. No GitHub Release is claimed for the `0.1.1` candidate.<br>当前审阅中的源码候选版本是 `0.1.1`，尚未发布。不可变的 `v0.1.0` tag 指向较早的 revision `455dbb61d5cabe032e3497ba4d9eeb9c39584662`，不得移动或覆盖。当前不声称 `0.1.1` 候选版本已有 GitHub Release。
+
 The manual [release process](docs/release-process.md) and [release checklist](docs/release-checklist.md) distinguish candidate readiness from actual release state. A green preflight is advisory evidence; it does not create a tag, GitHub Release, npm publication, or deployment.
 
 手动 [release process](docs/release-process.md) 和 [release checklist](docs/release-checklist.md) 区分候选版本就绪与实际发布状态。绿色 preflight 只是 advisory evidence，不会创建 tag、GitHub Release、npm publication 或 deployment。

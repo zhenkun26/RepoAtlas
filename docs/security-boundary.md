@@ -94,7 +94,7 @@ v2.11 的 `inspect-release` 只接受当前 session 中的 `proposalId`，并从
 
 v2.12 的开源化工作只建立仓库交付边界：根目录许可证、贡献/行为/安全/变更文档、源码优先的 Harness bundle 安装说明和 CI 质量门禁。它不改变 RepoAtlas 运行时权限，不新增网络、Shell、持久化、跨 session、source workspace 写入或 remote Git 能力；CI 中下载 OpenSpec CLI 只发生在 disposable runner，不代表插件运行时获得网络访问。
 
-在 distribution decision 完成前，`package.json` 保持 `private: true`，仓库不宣称 npm 包、`dist/` 编译产物、真实 Harness CI 集成、tag/release 或 support SLA。许可证持有人确认、clean-clone/packed-install、真实 Harness smoke test 和首个公开 release 都是后续独立审阅项。
+在 distribution decision 完成前，`package.json` 保持 `private: true`，仓库不宣称 npm 包、`dist/` 编译产物、真实 Harness CI 集成、当前候选的 tag/release 或 support SLA。许可证持有人确认、clean-clone/packed-install、真实 Harness smoke test 和 source-first release 都是独立审阅项；已有历史 tag 不等于当前候选已发布。
 
 ## v2.13 source-distribution readiness
 
@@ -107,6 +107,10 @@ v2.13 将 source-first 作为当前分发决策：`package.json` 继续 `private
 ## v2.14 public release preflight
 
 v2.14 的公开 release 准备仍是 repository tooling，不是 RepoAtlas runtime。`npm run verify:release-preflight` 只读取 package/license/NOTICE、support/release 文档、release checklist、active OpenSpec 目录和本地 Git 状态；Git 调用使用固定 argv 与 `shell:false`，不 fetch、不 reset、不 clean、不 commit、不 tag、不 push，不访问网络，也不接收命令、路径或 approval 输入。它输出 bounded JSON 的 `ready`/`blocked`、blocker code、当前 revision 和 branch，并始终报告 `tagCreated:false`、`releaseCreated:false`、`publishPerformed:false`、`networkAccessed:false`。
+
+## v2.17 public release alignment
+
+v2.17 只对齐 source-first release candidate 的本地版本、文档和人工 GitHub About metadata handoff。它将 `v0.1.0` 视为不可变历史 tag，并把 `0.1.1` 作为下一次未发布 candidate；repository tooling 不移动 tag、不创建 GitHub Release、不修改 GitHub metadata、不 publish npm、不 push，也不访问网络。`ready` 仍只表示本地 candidate evidence，不表示远程 release 或 deployment 已完成。
 
 dirty worktree、active OpenSpec change、缺少 `origin/main`、HEAD drift、source-first/许可证/文档不一致、未完成的 pinned smoke/README recheck、版权持有人未确认或 release notes 未完成，都会保持 `blocked`。`ready` 只表示候选事实在检查时满足声明，不是授权、tag、GitHub Release、npm 包、部署或 support SLA。`.github/workflows/release-preflight.yml` 仅 `workflow_dispatch` 且 `contents: read`，可以安装依赖并运行质量门禁，但不含任何 release side effect。
 

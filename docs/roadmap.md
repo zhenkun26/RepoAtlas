@@ -27,6 +27,9 @@
 15. v2.11（已完成）：提供 session-only `inspect-release` readiness observation，使用现有 worktree read-only inspection 区分 not-applicable、ready、proposal-state-blocked、worktree-dirty、identity-mismatch 和 unknown；不执行 release、remove、cleanup、approval、Git mutation 或持久化，也不把 ready 观察结果视为 release 已完成或授权。
 16. v2.12（已完成，开源化基线）：增加 MIT 工作许可证、贡献/行为/安全/变更文档、源码优先分发说明、release checklist 和 Node.js 22/24 GitHub Actions 门禁；保持 `private: true`，不发布 npm、不生成编译产物、不创建 tag/release，不改变任何 session-only runtime boundary。
 17. v2.13（已完成）：确定继续 source/plugin bundle first；增加 clean-checkout + local packed-install evaluation，明确 tarball 不等于 npm consumer import；固定公开 DeepSeek Harness revision `47f943859bef60e4160492346772ded9b24f765a`、Node 24.x 和 pnpm 11.7.0，提供 shell-free compatibility runner 与仅 `workflow_dispatch` 的真实 Harness smoke workflow；该 public pin smoke 已实际通过。外部 clone/install 仍不进入 runtime 或默认 CI。
-18. v2.14（当前实现，需独立 release 授权）：增加 proposed support policy、source-first 首次 release procedure、read-only `verify:release-preflight` 和 manual release-preflight workflow；preflight 只观察候选状态，不创建 tag、GitHub Release、npm publication、push 或 deployment。版权持有人确认、release notes 和实际 release 仍是人工 gate。
+18. v2.14（已完成，需独立 release 授权）：增加 proposed support policy、source-first 首次 release procedure、read-only `verify:release-preflight` 和 manual release-preflight workflow；preflight 只观察候选状态，不创建 tag、GitHub Release、npm publication、push 或 deployment。版权持有人确认、release notes 和实际 release 仍是人工 gate。
+19. v2.15（已完成）：优化开源项目展示，补充安全优先、证据驱动和 source-first 的项目描述、README landing 内容与 package description；不改变 runtime、npm 或 release side effect 边界。
+20. v2.16（已完成）：将 README 的主要评估、安装、安全、兼容性、分发和治理路径改为中英双语；共享命令、路径、链接和 revision，避免技术事实漂移。
+21. v2.17（已实现，需 clean candidate preflight 与独立 release 授权）：对齐下一次 source-first candidate `0.1.1`、不可变 `v0.1.0` 历史 tag、双语 release status、CHANGELOG、release checklist 和手动 GitHub About metadata handoff；不移动 tag、不创建 GitHub Release、不发布 npm、不访问网络。
 
-每个版本都应先更新安全边界、预算、部分失败语义和验收 fixture，再扩展工具权限。v2.11 的 OpenSpec sync/archive/commit/push 与 v2.12 的 release baseline 仍是两条独立的审阅边界。
+每个版本都应先更新安全边界、预算、部分失败语义和验收 fixture，再扩展工具权限。v2.11 的 OpenSpec sync/archive/commit/push、v2.12 的 release baseline、v2.17 的 candidate alignment 与实际 tag/Release 操作仍是独立的审阅边界。
