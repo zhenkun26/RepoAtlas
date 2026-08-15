@@ -100,7 +100,7 @@ v2.12 的开源化工作只建立仓库交付边界：根目录许可证、贡�
 
 v2.13 将 source-first 作为当前分发决策：`package.json` 继续 `private: true`，根目录 `cordis.patch.yml` 继续作为 Harness bundle 入口。`npm run verify:source-artifact` 只在 task-owned 临时目录中执行 `npm pack` 和 offline local install，使用临时 npm cache，并检查 tarball/installed metadata；它不执行 `npm publish`，不生成 `dist/`，也不把普通 Node consumer import 作为支持契约。Node 24 的内置 TypeScript stripping 不允许直接从 `node_modules` 加载 `.ts`，因此源码 package artifact 与可发布 npm runtime package 是两个不同边界。
 
-真实 Harness smoke 是开发/CI 工具，不是 `src/` runtime 路径。它只接受 `REPO_ATLAS_HARNESS_ROOT` 作为显式 Harness checkout，随后必须匹配 `reference/harness-compatibility.json` 中的公开 revision `47f943859bef60e4160492346772ded9b24f765a`；命令 argv 固定、`shell:false`、profile 状态位于 task-owned 临时 `DSH_HOME`，并过滤常见 credential 环境变量。外部 Harness clone、`pnpm install --frozen-lockfile` 和 smoke 只出现在 `workflow_dispatch` 的 `contents: read` workflow；默认 PR/push CI 不执行它，插件运行时也不能调用它。
+真实 Harness smoke 是开发/CI 工具，不是 `src/` runtime 路径。它只接受 `REPO_ATLAS_HARNESS_ROOT` 作为显式 Harness checkout，随后必须匹配 `reference/harness-compatibility.json` 中的公开 revision `47f943859bef60e4160492346772ded9b24f765a`；manual workflow 先通过 pinned repository 的根 `pnpm run build` 生成 host、client 与 Web outputs，runner 命令 argv 固定、`shell:false`、profile 状态位于 task-owned 临时 `DSH_HOME`，并过滤常见 credential 环境变量。外部 Harness clone、`pnpm install --frozen-lockfile`、root build 和 smoke 只出现在 `workflow_dispatch` 的 `contents: read` workflow；默认 PR/push CI 不执行它，插件运行时也不能调用它。
 
 外部命令、网络 action、依赖安装、凭据缺失、revision drift 或输出不符合预期都会 fail closed 为“未验收”，不修改 RepoAtlas source workspace，不回滚或清理 Harness checkout，也不把 workflow 定义或 fake-context 测试升级为真实集成成功。MIT 允许使用、修改和再分发并要求保留 notice/disclaimer；项目另行请求公开引用标注 RepoAtlas / 代码星图并链接来源仓库，这两者继续保持分离。
 

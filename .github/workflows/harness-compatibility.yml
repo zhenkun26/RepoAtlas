@@ -46,9 +46,9 @@ jobs:
       - name: Build RepoAtlas
         run: npm run build
 
-      - name: Build pinned Harness host declarations
+      - name: Build pinned Harness
         working-directory: harness
-        run: pnpm build:lib:host
+        run: pnpm run build
 
       - name: Run RepoAtlas compatibility smoke
         env:

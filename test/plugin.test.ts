@@ -505,6 +505,40 @@ test('controlled action tool rejects Harness sandbox policy root drift before co
   assert.equal(spawnCount, 0)
 })
 
+test('controlled action tool rejects an unconfined Harness sandbox mode before confinement or spawn', async () => {
+  const workspaceRoot = path.join(process.cwd(), 'test', 'fixtures', 'complete-repo')
+  let confineCount = 0
+  let spawnCount = 0
+  const registered: HarnessTool[] = []
+  const services: Record<string, unknown> = {
+    goals: { get: () => ({ phase: 'active', activation: 'armed' }) },
+    approval: { request: async () => 'allowed-once' },
+    sandboxPolicy: { resolve: () => ({ mode: 'danger-full-access', workspaceRoot }) },
+    sandbox: { confine: () => { confineCount += 1; throw new Error('must not confine') } },
+    subprocess: { spawn: () => { spawnCount += 1; throw new Error('must not spawn') } },
+  }
+  apply({
+    tools: { register: (tool) => registered.push(tool) },
+    get: <T>(name: string) => services[name] as T | undefined,
+  }, {
+    workspaceRoot,
+    controlledActions: {
+      enabled: true,
+      recipes: [{ id: 'test', command: 'npm', args: ['test'], sandboxMode: 'read-only', timeoutMs: 30_000, maxOutputBytes: 32_000, enabled: true }],
+    },
+  })
+  const action = registered.find((tool) => tool.name === 'repo_atlas_controlled_action')
+  assert.ok(action)
+  const result = await action.execute(
+    { recipeId: 'test' },
+    harnessExecution(workspaceRoot),
+  ) as { status: string; reason: string }
+  assert.equal(result.status, 'sandbox-unavailable')
+  assert.match(result.reason, /unsupported sandbox mode/)
+  assert.equal(confineCount, 0)
+  assert.equal(spawnCount, 0)
+})
+
 test('controlled action tool rejects an unknown recipe before asking for approval', async () => {
   const workspaceRoot = path.join(process.cwd(), 'test', 'fixtures', 'complete-repo')
   let approvalCount = 0

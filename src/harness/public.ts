@@ -52,8 +52,10 @@ export interface HarnessGoalService {
   get(agent: HarnessAgent): { phase: 'active' | 'paused' | 'blocked' | 'complete'; activation: 'armed' | 'disarmed' } | undefined
 }
 
+export type HarnessSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+
 export interface HarnessSandboxPolicyService {
-  resolve(request?: { mode?: 'read-only' | 'workspace-write'; session?: HarnessSession }): {
+  resolve(request?: { mode?: HarnessSandboxMode; session?: HarnessSession }): {
     mode: string
     workspaceRoot: string
     sessionId?: string

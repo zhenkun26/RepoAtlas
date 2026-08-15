@@ -9,6 +9,8 @@ All notable RepoAtlas changes will be documented here. The existing `v0.1.0` tag
 - v2.18 resolves the analysis workspace from each live Harness invocation, forwards its cancellation signal, and owns proposal state by the exact Harness session object instead of plugin mount cwd.
 - v2.19 adds an official public-API type contract at the exact Harness pin, aligns sandbox policy with `{ session, mode }`, and upgrades the manual smoke to a bounded live Web boot and loopback probe.
 - v2.20 adds deterministic ESM/declaration output, built package exports, a minimal files allowlist, and offline installed-package imports for both the root and Harness entry.
+- v2.21 repairs the official sandbox-policy structural contract for the complete pinned mode vocabulary while preserving confined-only RepoAtlas execution.
+- v2.22 repairs the manual Harness compatibility workflow by completing the pinned repository's declared host, client, and Web build before live boot.
 
 ### Security
 
