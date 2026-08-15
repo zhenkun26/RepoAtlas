@@ -315,6 +315,11 @@ export interface ChangeProposalListRequest {
   limit?: number
 }
 
+export interface ChangeProposalHistoryRequest {
+  proposalId: string
+  limit?: number
+}
+
 export interface ChangeProposalPatchRequest {
   proposalId: string
   patchText: string
@@ -366,6 +371,20 @@ export interface ChangeProposalLiveInspection {
   sessionOnly: true
   source: ChangeProposalLiveSourceObservation
   worktree: ChangeProposalLiveWorktreeObservation
+}
+
+export type ChangeProposalEventPhase = 'proposal' | 'patch' | 'verification' | 'commit' | 'landing' | 'release'
+
+export interface ChangeProposalEvent {
+  eventId: string
+  proposalId: string
+  phase: ChangeProposalEventPhase
+  status: ChangeProposalStatus
+  operationStatus: ChangeProposalOperationStatus
+  executionStatus: ChangeProposalExecutionStatus
+  reason: string
+  createdAt: string
+  sessionOnly: true
 }
 
 export interface ChangeProposalTarget {
@@ -545,6 +564,33 @@ export interface ChangeProposalSummary {
   }
 }
 
+export type ChangeProposalRecoveryAction =
+  | 'confirm'
+  | 'reject'
+  | 'prepare-patch'
+  | 'confirm-patch'
+  | 'reject-patch'
+  | 'verify-patch'
+  | 'prepare-commit'
+  | 'confirm-commit'
+  | 'reject-commit'
+  | 'prepare-landing'
+  | 'confirm-landing'
+  | 'reject-landing'
+  | 'release'
+
+export type ChangeProposalRecoveryRecommendation = ChangeProposalRecoveryAction | 'manual-review-required' | 'no-action'
+
+export interface ChangeProposalRecoveryGuidance {
+  proposalId: string
+  proposal: ChangeProposalSummary
+  recommendation: ChangeProposalRecoveryRecommendation
+  allowedActions: ChangeProposalRecoveryAction[]
+  manualReviewRequired: boolean
+  reason: string
+  sessionOnly: true
+}
+
 export interface ChangeProposalListResult {
   status: 'available' | 'blocked'
   reason: string
@@ -552,6 +598,24 @@ export interface ChangeProposalListResult {
   total: number
   returned: number
   truncated: boolean
+  sessionOnly: true
+}
+
+export interface ChangeProposalHistoryResult {
+  status: 'available' | 'blocked'
+  reason: string
+  proposalId?: string
+  events: ChangeProposalEvent[]
+  total: number
+  returned: number
+  truncated: boolean
+  sessionOnly: true
+}
+
+export interface ChangeProposalRecoveryResult {
+  status: 'available' | 'blocked'
+  reason: string
+  guidance?: ChangeProposalRecoveryGuidance
   sessionOnly: true
 }
 

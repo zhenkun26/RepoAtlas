@@ -13,6 +13,10 @@ import type {
   ChangeProposalCommit,
   ChangeProposalCommitRequest,
   ChangeProposalCommitExecutionStatus,
+  ChangeProposalEvent,
+  ChangeProposalEventPhase,
+  ChangeProposalHistoryRequest,
+  ChangeProposalHistoryResult,
   ChangeProposalLanding,
   ChangeProposalLandingRequest,
   ChangeProposalLandingExecutionStatus,
@@ -28,6 +32,9 @@ import type {
   ChangeProposalPatchSummary,
   ChangeProposalOperation,
   ChangeProposalRequest,
+  ChangeProposalRecoveryAction,
+  ChangeProposalRecoveryRecommendation,
+  ChangeProposalRecoveryResult,
   ChangeProposalResult,
   ChangeProposalSummary,
   ChangeProposalTarget,
@@ -43,6 +50,7 @@ export interface ChangeProposalLimits {
   maxTargets: number
   maxEvidenceIds: number
   maxTextBytes: number
+  maxHistoryEvents: number
   expirationMs: number
   maxPatchBytes: number
   maxPatchFiles: number
@@ -54,6 +62,7 @@ export const DEFAULT_CHANGE_PROPOSAL_LIMITS: ChangeProposalLimits = {
   maxTargets: 32,
   maxEvidenceIds: 64,
   maxTextBytes: 4_096,
+  maxHistoryEvents: 128,
   expirationMs: 15 * 60 * 1_000,
   maxPatchBytes: 128 * 1_024,
   maxPatchFiles: 32,
@@ -160,6 +169,10 @@ interface StoredLandingDraft {
   landing: ChangeProposalLanding
 }
 
+type ChangeProposalEventRecorder = (phase: ChangeProposalEventPhase, reason: string) => void
+
+const proposalEventRecorders = new WeakMap<ChangeProposal, ChangeProposalEventRecorder>()
+
 interface ParsedPatch {
   canonicalText: string
   summary: ChangeProposalPatchSummary
@@ -203,6 +216,7 @@ export interface ChangeProposalManagerOptions {
 export class ChangeProposalManager {
   private readonly sessions = new Map<string, AnalysisSession>()
   private readonly proposals = new Map<string, ChangeProposal>()
+  private readonly histories = new Map<string, ChangeProposalEvent[]>()
   private readonly patches = new Map<string, StoredPatchDraft>()
   private readonly commits = new Map<string, StoredCommitDraft>()
   private readonly landings = new Map<string, StoredLandingDraft>()
@@ -296,6 +310,45 @@ export class ChangeProposalManager {
     }
   }
 
+  history(request: ChangeProposalHistoryRequest): ChangeProposalHistoryResult {
+    const limit = normalizeProposalListLimit(request.limit)
+    if (limit === undefined) return blockedProposalHistory('proposal history limit must be a positive safe integer no greater than 100')
+    const proposal = this.proposals.get(request.proposalId)
+    if (!proposal) return blockedProposalHistory('proposal is unknown to the current session')
+    const retained = this.histories.get(proposal.proposalId) ?? []
+    const events = retained.slice(Math.max(0, retained.length - limit)).map(cloneProposalEvent)
+    return {
+      status: 'available',
+      reason: 'session-only lifecycle events returned; live workspace and Git state were not inspected',
+      proposalId: proposal.proposalId,
+      events,
+      total: retained.length,
+      returned: events.length,
+      truncated: retained.length > limit,
+      sessionOnly: true,
+    }
+  }
+
+  inspectRecovery(proposalId: string): ChangeProposalRecoveryResult {
+    const proposal = this.proposals.get(proposalId)
+    if (!proposal) return blockedProposalRecovery('proposal is unknown to the current session')
+    const decision = recoveryDecision(proposal)
+    return {
+      status: 'available',
+      reason: 'session-only recovery guidance returned; no lifecycle or live Git state was changed',
+      guidance: {
+        proposalId: proposal.proposalId,
+        proposal: proposalSummary(proposal),
+        recommendation: decision.recommendation,
+        allowedActions: [...decision.allowedActions],
+        manualReviewRequired: decision.manualReviewRequired,
+        reason: boundedRedactedText(decision.reason, this.limits.maxTextBytes),
+        sessionOnly: true,
+      },
+      sessionOnly: true,
+    }
+  }
+
   async prepare(request: ChangeProposalRequest, signal?: AbortSignal): Promise<ChangeProposalResult> {
     if (signal?.aborted) return blockedResult('interrupted', 'proposal preparation was interrupted before validation')
     const session = this.sessions.get(request.sessionId)
@@ -352,7 +405,28 @@ export class ChangeProposalManager {
     }
     proposal.confirmationDigest = createProposalDigest(proposal)
     this.proposals.set(proposal.proposalId, proposal)
+    this.attachEventRecorder(proposal)
+    recordProposalEvent(proposal, 'proposal', 'proposal prepared; explicit digest confirmation is required before worktree creation')
     return resultFor(proposal, 'proposal prepared; explicit digest confirmation is required before worktree creation')
+  }
+
+  private attachEventRecorder(proposal: ChangeProposal): void {
+    const events: ChangeProposalEvent[] = []
+    this.histories.set(proposal.proposalId, events)
+    proposalEventRecorders.set(proposal, (phase, reason) => {
+      events.push({
+        eventId: `event-${randomUUID()}`,
+        proposalId: proposal.proposalId,
+        phase,
+        status: proposal.status,
+        operationStatus: proposal.operationStatus,
+        executionStatus: { ...proposal.executionStatus },
+        reason: boundedRedactedText(reason, this.limits.maxTextBytes),
+        createdAt: new Date().toISOString(),
+        sessionOnly: true,
+      })
+      while (events.length > this.limits.maxHistoryEvents) events.shift()
+    })
   }
 
   async confirm(proposalId: string, confirmationDigest: string, signal?: AbortSignal): Promise<ChangeProposalResult> {
@@ -378,6 +452,7 @@ export class ChangeProposalManager {
       proposal.worktree = worktree
       proposal.status = 'confirmed'
       proposal.operationStatus = 'worktree-created'
+      recordProposalEvent(proposal, 'proposal', 'isolated worktree created; patch, commit, and push were not performed')
       return resultFor(proposal, 'isolated worktree created; patch, commit, and push were not performed')
     } catch (error) {
       return mutateStatus(proposal, signal?.aborted ? 'interrupted' : 'blocked', 'blocked', `isolated worktree creation failed: ${redactError(error)}`)
@@ -419,6 +494,7 @@ export class ChangeProposalManager {
     proposal.patch = patch
     proposal.operationStatus = 'patch-awaiting-confirmation'
     this.patches.set(patch.patchId, { proposalId: proposal.proposalId, patchText: validation.parsed.canonicalText, patch })
+    recordProposalEvent(proposal, 'patch', 'patch draft prepared; exact patch digest confirmation is required before application')
     return resultFor(proposal, 'patch draft prepared; exact patch digest confirmation is required before application')
   }
 
@@ -484,7 +560,9 @@ export class ChangeProposalManager {
       draft.patch.executionStatus = uncertain ? 'patch-application-unknown' : 'patch-not-applied'
       proposal.executionStatus.patch = draft.patch.executionStatus
       proposal.operationStatus = 'blocked'
-      return resultFor(proposal, `isolated patch application failed${uncertain ? '; application result is unknown and the worktree was retained' : ''}: ${redactError(error)}`)
+      const reason = `isolated patch application failed${uncertain ? '; application result is unknown and the worktree was retained' : ''}: ${redactError(error)}`
+      recordProposalEvent(proposal, 'patch', reason)
+      return resultFor(proposal, reason)
     }
 
     let after: InspectedWorktree
@@ -503,6 +581,7 @@ export class ChangeProposalManager {
     proposal.executionStatus.patch = 'patch-applied'
     proposal.operationStatus = 'patch-applied'
     proposal.patchApplied = true
+    recordProposalEvent(proposal, 'patch', 'patch applied to the isolated worktree; commit and push were not performed')
     return resultFor(proposal, 'patch applied to the isolated worktree; commit and push were not performed')
   }
 
@@ -514,6 +593,7 @@ export class ChangeProposalManager {
     if (draft.patch.status !== 'awaiting-confirmation') return resultFor(proposal, 'patch draft is no longer awaiting confirmation')
     draft.patch.status = 'rejected'
     proposal.operationStatus = 'patch-rejected'
+    recordProposalEvent(proposal, 'patch', 'patch draft rejected; no files were modified')
     return resultFor(proposal, 'patch draft rejected; no files were modified')
   }
 
@@ -610,6 +690,7 @@ export class ChangeProposalManager {
     proposal.commit = commit
     proposal.operationStatus = 'commit-awaiting-confirmation'
     this.commits.set(commit.commitId, { proposalId: proposal.proposalId, commit })
+    recordProposalEvent(proposal, 'commit', 'commit draft prepared; exact commit digest and host approval are required before local commit')
     return resultForWithCommit(proposal, 'commit draft prepared; exact commit digest and host approval are required before local commit', commit)
   }
 
@@ -702,6 +783,7 @@ export class ChangeProposalManager {
     proposal.executionStatus.commit = 'commit-created'
     proposal.operationStatus = 'commit-created'
     proposal.commitCreated = true
+    recordProposalEvent(proposal, 'commit', 'local commit created in the isolated worktree; source workspace and remote were not modified')
     return resultForWithCommit(proposal, 'local commit created in the isolated worktree; source workspace and remote were not modified', draft.commit)
   }
 
@@ -713,6 +795,7 @@ export class ChangeProposalManager {
     if (draft.commit.status !== 'awaiting-confirmation') return resultForWithCommit(proposal, 'commit draft is no longer awaiting confirmation', draft.commit)
     draft.commit.status = 'rejected'
     proposal.operationStatus = 'commit-rejected'
+    recordProposalEvent(proposal, 'commit', 'commit draft rejected; no Git commit was created')
     return resultForWithCommit(proposal, 'commit draft rejected; no Git commit was created', draft.commit)
   }
 
@@ -752,6 +835,7 @@ export class ChangeProposalManager {
     proposal.landing = landing
     proposal.operationStatus = 'landing-awaiting-confirmation'
     this.landings.set(landing.landingId, { proposalId: proposal.proposalId, landing })
+    recordProposalEvent(proposal, 'landing', 'source landing draft prepared; exact landing digest and host approval are required before source mutation')
     return resultForWithLanding(proposal, 'source landing draft prepared; exact landing digest and host approval are required before source mutation', landing)
   }
 
@@ -831,6 +915,7 @@ export class ChangeProposalManager {
     proposal.executionStatus.landing = 'landing-completed'
     proposal.operationStatus = 'landing-completed'
     proposal.sourceLanded = true
+    recordProposalEvent(proposal, 'landing', 'source workspace fast-forward landed the isolated commit; remote and push were not performed')
     return resultForWithLanding(proposal, 'source workspace fast-forward landed the isolated commit; remote and push were not performed', draft.landing)
   }
 
@@ -842,6 +927,7 @@ export class ChangeProposalManager {
     if (draft.landing.status !== 'awaiting-confirmation') return resultForWithLanding(proposal, 'source landing draft is no longer awaiting confirmation', draft.landing)
     draft.landing.status = 'rejected'
     proposal.operationStatus = 'landing-rejected'
+    recordProposalEvent(proposal, 'landing', 'source landing draft rejected; source workspace was not modified')
     return resultForWithLanding(proposal, 'source landing draft rejected; source workspace was not modified', draft.landing)
   }
 
@@ -851,6 +937,7 @@ export class ChangeProposalManager {
     if (proposal.status !== 'awaiting-confirmation') return resultFor(proposal, 'proposal is no longer awaiting confirmation')
     proposal.status = 'rejected'
     proposal.operationStatus = 'blocked'
+    recordProposalEvent(proposal, 'proposal', 'proposal rejected; no worktree was created')
     return resultFor(proposal, 'proposal rejected; no worktree was created')
   }
 
@@ -858,17 +945,18 @@ export class ChangeProposalManager {
     const proposal = this.proposals.get(proposalId)
     if (!proposal) return blockedResult('blocked', 'proposal is unknown to the current session')
     if (proposal.status !== 'confirmed' || !proposal.worktree) return resultFor(proposal, 'only a confirmed proposal with a managed worktree can be released')
-    if (signal?.aborted) return mutateStatus(proposal, 'interrupted', 'blocked', 'worktree release was interrupted')
+    if (signal?.aborted) return mutateStatus(proposal, 'interrupted', 'blocked', 'worktree release was interrupted', 'release')
     try {
       const inspected = await this.adapter.inspect(proposal.repositoryRoot, proposal.worktree, signal)
-      if (inspected.identity !== proposal.worktree.identity) return mutateStatus(proposal, 'blocked', 'blocked', 'worktree identity no longer matches the session-owned worktree')
-      if (inspected.dirty) return mutateStatus(proposal, 'blocked', 'blocked', 'worktree has uncommitted changes; refusing force removal')
+      if (inspected.identity !== proposal.worktree.identity) return mutateStatus(proposal, 'blocked', 'blocked', 'worktree identity no longer matches the session-owned worktree', 'release')
+      if (inspected.dirty) return mutateStatus(proposal, 'blocked', 'blocked', 'worktree has uncommitted changes; refusing force removal', 'release')
       await this.adapter.remove(proposal.repositoryRoot, proposal.worktree, signal)
       proposal.status = 'released'
       proposal.operationStatus = 'released'
+      recordProposalEvent(proposal, 'release', 'session-owned clean worktree released')
       return resultFor(proposal, 'session-owned clean worktree released')
     } catch (error) {
-      return mutateStatus(proposal, signal?.aborted ? 'interrupted' : 'blocked', 'blocked', `worktree release failed: ${redactError(error)}`)
+      return mutateStatus(proposal, signal?.aborted ? 'interrupted' : 'blocked', 'blocked', `worktree release failed: ${redactError(error)}`, 'release')
     }
   }
 }
@@ -1323,6 +1411,7 @@ function updatePatchFailure(
   patch.executionStatus = executionStatus
   proposal.executionStatus.patch = executionStatus
   proposal.operationStatus = 'blocked'
+  recordProposalEvent(proposal, 'patch', reason)
   return resultFor(proposal, reason)
 }
 
@@ -1337,6 +1426,7 @@ function updateCommitFailure(
   commit.executionStatus = executionStatus
   proposal.executionStatus.commit = executionStatus
   proposal.operationStatus = status === 'interrupted' ? 'commit-interrupted' : 'commit-blocked'
+  recordProposalEvent(proposal, 'commit', reason)
   return resultForWithCommit(proposal, reason, commit)
 }
 
@@ -1351,6 +1441,7 @@ function updateLandingFailure(
   landing.executionStatus = executionStatus
   proposal.executionStatus.landing = executionStatus
   proposal.operationStatus = status === 'interrupted' ? 'landing-interrupted' : executionStatus === 'landing-creation-unknown' ? 'landing-creation-unknown' : 'landing-blocked'
+  recordProposalEvent(proposal, 'landing', reason)
   return resultForWithLanding(proposal, reason, landing)
 }
 
@@ -1362,6 +1453,7 @@ function recordVerification(
   patch.verificationStatus = verification.status
   patch.verification = verification
   proposal.operationStatus = verificationOperationStatus(verification.status)
+  recordProposalEvent(proposal, 'verification', verification.reason)
   return resultForWithVerification(proposal, verification.reason, verification)
 }
 
@@ -1600,14 +1692,123 @@ function blockedProposalList(reason: string): ChangeProposalListResult {
   }
 }
 
-function mutateStatus(proposal: ChangeProposal, status: ChangeProposal['status'], operationStatus: ChangeProposal['operationStatus'], reason: string): ChangeProposalResult {
+function blockedProposalHistory(reason: string): ChangeProposalHistoryResult {
+  return {
+    status: 'blocked',
+    reason,
+    events: [],
+    total: 0,
+    returned: 0,
+    truncated: false,
+    sessionOnly: true,
+  }
+}
+
+function blockedProposalRecovery(reason: string): ChangeProposalRecoveryResult {
+  return {
+    status: 'blocked',
+    reason,
+    sessionOnly: true,
+  }
+}
+
+function recoveryDecision(proposal: ChangeProposal): {
+  recommendation: ChangeProposalRecoveryRecommendation
+  allowedActions: ChangeProposalRecoveryAction[]
+  manualReviewRequired: boolean
+  reason: string
+} {
+  if (proposal.status === 'rejected' || proposal.status === 'released') {
+    return { recommendation: 'no-action', allowedActions: [], manualReviewRequired: false, reason: 'proposal is in a terminal session state with no automatic continuation' }
+  }
+  if (requiresManualRecoveryReview(proposal)) {
+    return {
+      recommendation: 'manual-review-required',
+      allowedActions: [],
+      manualReviewRequired: true,
+      reason: `proposal state ${proposal.operationStatus} is blocked, interrupted, uncertain, or not safe for automatic continuation`,
+    }
+  }
+  if (proposal.status === 'awaiting-confirmation') {
+    return { recommendation: 'confirm', allowedActions: ['confirm', 'reject'], manualReviewRequired: false, reason: 'proposal is awaiting the explicit confirmation digest' }
+  }
+  if (proposal.status !== 'confirmed') {
+    return { recommendation: 'manual-review-required', allowedActions: [], manualReviewRequired: true, reason: 'proposal status is not a safe continuation state' }
+  }
+  if (!proposal.patch) {
+    return { recommendation: 'prepare-patch', allowedActions: ['prepare-patch', 'release'], manualReviewRequired: false, reason: 'confirmed proposal has no patch draft; prepare a bounded patch or release the clean worktree' }
+  }
+  if (proposal.patch.status === 'awaiting-confirmation') {
+    return { recommendation: 'confirm-patch', allowedActions: ['confirm-patch', 'reject-patch', 'release'], manualReviewRequired: false, reason: 'patch draft is awaiting its exact confirmation digest' }
+  }
+  if (proposal.patch.status === 'rejected') {
+    return { recommendation: 'release', allowedActions: ['release'], manualReviewRequired: false, reason: 'patch draft was rejected and the proposal worktree can only be safely released' }
+  }
+  if (proposal.patch.status !== 'applied') {
+    return { recommendation: 'manual-review-required', allowedActions: [], manualReviewRequired: true, reason: 'patch state does not prove a safe continuation' }
+  }
+  if (proposal.patch.verificationStatus === 'not-run') {
+    return { recommendation: 'verify-patch', allowedActions: ['verify-patch'], manualReviewRequired: false, reason: 'applied patch has not yet recorded a verification result' }
+  }
+  if (proposal.patch.verificationStatus !== 'passed') {
+    return { recommendation: 'manual-review-required', allowedActions: [], manualReviewRequired: true, reason: 'patch verification did not prove a safe continuation' }
+  }
+  if (!proposal.commit) {
+    return { recommendation: 'prepare-commit', allowedActions: ['prepare-commit'], manualReviewRequired: false, reason: 'patch verification passed and a commit draft can be prepared' }
+  }
+  if (proposal.commit.status === 'awaiting-confirmation') {
+    return { recommendation: 'confirm-commit', allowedActions: ['confirm-commit', 'reject-commit'], manualReviewRequired: false, reason: 'commit draft is awaiting its exact digest and host approval' }
+  }
+  if (proposal.commit.status !== 'created') {
+    return { recommendation: 'manual-review-required', allowedActions: [], manualReviewRequired: true, reason: 'commit state does not prove a safe continuation' }
+  }
+  if (!proposal.landing) {
+    return { recommendation: 'prepare-landing', allowedActions: ['prepare-landing', 'release'], manualReviewRequired: false, reason: 'local commit is known and source landing can be prepared or the clean worktree can be released' }
+  }
+  if (proposal.landing.status === 'awaiting-confirmation') {
+    return { recommendation: 'confirm-landing', allowedActions: ['confirm-landing', 'reject-landing'], manualReviewRequired: false, reason: 'source landing draft is awaiting its exact digest and host approval' }
+  }
+  if (proposal.landing.status === 'landed' || proposal.landing.status === 'rejected') {
+    return { recommendation: 'release', allowedActions: ['release'], manualReviewRequired: false, reason: 'source landing is terminal and the session-owned clean worktree can be released' }
+  }
+  return { recommendation: 'manual-review-required', allowedActions: [], manualReviewRequired: true, reason: 'landing state does not prove a safe continuation' }
+}
+
+function requiresManualRecoveryReview(proposal: ChangeProposal): boolean {
+  if (proposal.status === 'blocked' || proposal.status === 'interrupted') return true
+  if (proposal.executionStatus.patch === 'patch-application-unknown' || proposal.executionStatus.commit === 'commit-creation-unknown' || proposal.executionStatus.landing === 'landing-creation-unknown') return true
+  if (proposal.patch && (proposal.patch.status === 'blocked' || proposal.patch.status === 'interrupted' || proposal.patch.verificationStatus === 'failed' || proposal.patch.verificationStatus === 'blocked' || proposal.patch.verificationStatus === 'interrupted' || proposal.patch.verificationStatus === 'denied' || proposal.patch.verificationStatus === 'sandbox-unavailable' || proposal.patch.verificationStatus === 'timed-out' || proposal.patch.verificationStatus === 'cancelled')) return true
+  if (proposal.commit && (proposal.commit.status === 'blocked' || proposal.commit.status === 'interrupted')) return true
+  if (proposal.landing && (proposal.landing.status === 'blocked' || proposal.landing.status === 'interrupted')) return true
+  return false
+}
+
+function mutateStatus(
+  proposal: ChangeProposal,
+  status: ChangeProposal['status'],
+  operationStatus: ChangeProposal['operationStatus'],
+  reason: string,
+  phase: ChangeProposalEventPhase = 'proposal',
+): ChangeProposalResult {
   proposal.status = status
   proposal.operationStatus = operationStatus
+  recordProposalEvent(proposal, phase, reason)
   return resultFor(proposal, reason)
 }
 
 function blockedResult(status: Extract<ChangeProposal['status'], 'blocked' | 'interrupted'>, reason: string): ChangeProposalResult {
   return { status, operationStatus: 'blocked', reason }
+}
+
+function recordProposalEvent(proposal: ChangeProposal, phase: ChangeProposalEventPhase, reason: string): void {
+  proposalEventRecorders.get(proposal)?.(phase, reason)
+}
+
+function cloneProposalEvent(event: ChangeProposalEvent): ChangeProposalEvent {
+  return {
+    ...event,
+    executionStatus: { ...event.executionStatus },
+  }
 }
 
 function cloneProposal(proposal: ChangeProposal): ChangeProposal {

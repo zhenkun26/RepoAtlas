@@ -37,6 +37,8 @@ test('Harness adapter registers read-only analysis and session-only proposal too
   assert.match(JSON.stringify(proposal.parameters), /reject-landing/)
   assert.match(JSON.stringify(proposal.parameters), /inspect/)
   assert.match(JSON.stringify(proposal.parameters), /list/)
+  assert.match(JSON.stringify(proposal.parameters), /history/)
+  assert.match(JSON.stringify(proposal.parameters), /inspect-recovery/)
   assert.match(JSON.stringify(proposal.parameters), /inspect-live/)
   assert.match(JSON.stringify(proposal.parameters), /limit/)
   assert.deepEqual(analysis.output.schema, { type: 'object' })
@@ -67,6 +69,34 @@ test('Harness adapter registers read-only analysis and session-only proposal too
   assert.equal(listed.returned, 1)
   assert.equal(listed.truncated, false)
   assert.equal(listed.proposals?.[0]?.proposalId, prepared.proposal?.proposalId)
+  const history = await proposal.execute({ action: 'history', proposalId: prepared.proposal?.proposalId }) as { status: string; proposalId?: string; total: number; returned: number; truncated: boolean; events?: Array<{ phase: string; operationStatus: string }> }
+  assert.equal(history.status, 'available')
+  assert.equal(history.proposalId, prepared.proposal?.proposalId)
+  assert.equal(history.total, 1)
+  assert.equal(history.returned, 1)
+  assert.equal(history.truncated, false)
+  assert.equal(history.events?.[0]?.phase, 'proposal')
+  assert.equal(history.events?.[0]?.operationStatus, 'proposal')
+  const recovery = await proposal.execute({ action: 'inspect-recovery', proposalId: prepared.proposal?.proposalId }) as { status: string; guidance?: { recommendation: string; allowedActions: string[]; manualReviewRequired: boolean; proposal?: { proposalId: string } } }
+  assert.equal(recovery.status, 'available')
+  assert.equal(recovery.guidance?.recommendation, 'confirm')
+  assert.deepEqual(recovery.guidance?.allowedActions, ['confirm', 'reject'])
+  assert.equal(recovery.guidance?.manualReviewRequired, false)
+  assert.equal(recovery.guidance?.proposal?.proposalId, prepared.proposal?.proposalId)
+  const missingRecovery = await proposal.execute({ action: 'inspect-recovery' }) as { status: string; guidance?: unknown }
+  assert.equal(missingRecovery.status, 'blocked')
+  assert.equal(missingRecovery.guidance, undefined)
+  const unknownRecovery = await proposal.execute({ action: 'inspect-recovery', proposalId: 'proposal-unknown' }) as { status: string; guidance?: unknown }
+  assert.equal(unknownRecovery.status, 'blocked')
+  assert.equal(unknownRecovery.guidance, undefined)
+  const missingHistory = await proposal.execute({ action: 'history' }) as { status: string; events?: unknown[]; total: number }
+  assert.equal(missingHistory.status, 'blocked')
+  assert.deepEqual(missingHistory.events, [])
+  assert.equal(missingHistory.total, 0)
+  const invalidHistory = await proposal.execute({ action: 'history', proposalId: prepared.proposal?.proposalId, limit: 0 }) as { status: string; events?: unknown[]; total: number }
+  assert.equal(invalidHistory.status, 'blocked')
+  assert.deepEqual(invalidHistory.events, [])
+  assert.equal(invalidHistory.total, 0)
   const invalidList = await proposal.execute({ action: 'list', limit: 0 }) as { status: string; returned: number; proposals?: unknown[] }
   assert.equal(invalidList.status, 'blocked')
   assert.equal(invalidList.returned, 0)

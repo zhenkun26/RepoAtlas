@@ -265,6 +265,12 @@ test('lifecycle inspection preserves an uncertain commit state without upgrading
   )
   assert.equal(uncertain.proposal?.commit?.executionStatus, 'commit-creation-unknown')
 
+  const history = manager.history({ proposalId: draft.proposal?.proposalId ?? '' })
+  const uncertainEvent = history.events.at(-1)
+  assert.equal(uncertainEvent?.phase, 'commit')
+  assert.equal(uncertainEvent?.operationStatus, 'commit-blocked')
+  assert.equal(uncertainEvent?.executionStatus.commit, 'commit-creation-unknown')
+
   const inspected = manager.inspect(draft.proposal?.proposalId ?? '')
   assert.equal(inspected.proposal?.commit?.executionStatus, 'commit-creation-unknown')
   assert.equal(inspected.proposal?.executionStatus.commit, 'commit-creation-unknown')
@@ -334,6 +340,247 @@ test('proposal listing rejects invalid limits and preserves uncertain execution 
   assert.equal(summary?.commitCreated, false)
   assert.equal(summary?.executionStatus.push, 'push-not-performed')
   assert.equal(adapter.commitCount, commitCount)
+})
+
+test('lifecycle history records legal transitions and excludes read-only or no-transition calls', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+
+  const pending = await manager.prepare(request())
+  const proposalId = pending.proposal?.proposalId ?? ''
+  const initial = manager.history({ proposalId })
+  assert.equal(initial.status, 'available')
+  assert.equal(initial.total, 1)
+  assert.equal(initial.events[0]?.phase, 'proposal')
+  assert.equal(initial.events[0]?.operationStatus, 'proposal')
+
+  const beforeReadOnly = JSON.stringify(initial.events)
+  manager.inspect(proposalId)
+  manager.list()
+  await manager.inspectLive(proposalId)
+  const mismatch = await manager.confirm(proposalId, '0'.repeat(64))
+  assert.equal(mismatch.status, 'awaiting-confirmation')
+  assert.equal(JSON.stringify(manager.history({ proposalId }).events), beforeReadOnly)
+
+  const confirmed = await manager.confirm(proposalId, pending.proposal?.confirmationDigest ?? '')
+  const patchDraft = await manager.preparePatch({ proposalId, patchText: validPatch() })
+  const applied = await manager.confirmPatch(patchDraft.proposal?.patch?.patchId ?? '', patchDraft.proposal?.patch?.confirmationDigest ?? '')
+  const verified = await manager.verifyPatch({
+    patchId: applied.proposal?.patch?.patchId ?? '',
+    confirmationDigest: applied.proposal?.patch?.confirmationDigest ?? '',
+    recipeId: 'history-verification',
+  }, passedVerificationRunner())
+  const commitDraft = await manager.prepareCommit({ proposalId, commitMessage: 'feat: history' })
+  const created = await manager.confirmCommit(
+    commitDraft.proposal?.commit?.commitId ?? '',
+    commitDraft.proposal?.commit?.confirmationDigest ?? '',
+    { authorize: async () => ({ allowed: true, auditId: 'history-approval', reason: 'approved' }) },
+  )
+  const landingDraft = await manager.prepareLanding({ proposalId })
+  await manager.confirmLanding(
+    landingDraft.proposal?.landing?.landingId ?? '',
+    landingDraft.proposal?.landing?.confirmationDigest ?? '',
+    { authorize: async () => ({ allowed: true, auditId: 'history-landing-approval', reason: 'approved' }) },
+  )
+  const released = await manager.release(proposalId)
+  assert.equal(confirmed.operationStatus, 'worktree-created')
+  assert.equal(verified.operationStatus, 'patch-verification-passed')
+  assert.equal(created.operationStatus, 'commit-created')
+  assert.equal(released.operationStatus, 'released')
+
+  const history = manager.history({ proposalId, limit: 100 })
+  assert.equal(history.status, 'available')
+  assert.deepEqual(history.events.map((event) => event.operationStatus), [
+    'proposal',
+    'worktree-created',
+    'patch-awaiting-confirmation',
+    'patch-applied',
+    'patch-verification-passed',
+    'commit-awaiting-confirmation',
+    'commit-created',
+    'landing-awaiting-confirmation',
+    'landing-completed',
+    'released',
+  ])
+  assert.deepEqual(history.events.map((event) => event.phase), [
+    'proposal', 'proposal', 'patch', 'patch', 'verification', 'commit', 'commit', 'landing', 'landing', 'release',
+  ])
+  assert.equal(JSON.stringify(history.events).includes('confirmationDigest'), false)
+  assert.equal(JSON.stringify(history.events).includes('src/index.ts'), false)
+})
+
+test('lifecycle history is bounded, fail-closed, redacted, and detached', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter, limits: { maxHistoryEvents: 2 } })
+  manager.registerSession(createSession())
+  const pending = await manager.prepare(request({ intent: 'token = "sk-abcdefghijklmnop"' }))
+  const proposalId = pending.proposal?.proposalId ?? ''
+  const invalidLimits = [0, -1, 1.5, 101, Number.NaN]
+  for (const limit of invalidLimits) {
+    const invalid = manager.history({ proposalId, limit })
+    assert.equal(invalid.status, 'blocked')
+    assert.deepEqual(invalid.events, [])
+    assert.equal(invalid.total, 0)
+  }
+  const unknown = manager.history({ proposalId: 'proposal-unknown' })
+  assert.equal(unknown.status, 'blocked')
+  assert.deepEqual(unknown.events, [])
+  assert.equal(adapter.inspectCount, 0)
+  assert.equal(adapter.inspectSourceCount, 0)
+
+  await manager.confirm(proposalId, pending.proposal?.confirmationDigest ?? '')
+  const released = await manager.release(proposalId)
+  assert.equal(released.status, 'released')
+  const limited = manager.history({ proposalId, limit: 1 })
+  assert.equal(limited.total, 2)
+  assert.equal(limited.returned, 1)
+  assert.equal(limited.truncated, true)
+  assert.equal(limited.events[0]?.operationStatus, 'released')
+  if (!limited.events[0]) throw new Error('history should contain the latest event')
+  limited.events[0].reason = 'caller mutation'
+  limited.events[0].executionStatus.push = 'push-not-performed'
+  const detached = manager.history({ proposalId, limit: 1 })
+  assert.notEqual(detached.events[0]?.reason, 'caller mutation')
+  assert.equal(detached.events[0]?.executionStatus.push, 'push-not-performed')
+  assert.equal(JSON.stringify(detached.events).includes('sk-abcdefghijklmnop'), false)
+})
+
+test('recovery guidance maps lifecycle stages without executing or recording recovery', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+  const pending = await manager.prepare(request())
+  const proposalId = pending.proposal?.proposalId ?? ''
+
+  const pendingGuidance = manager.inspectRecovery(proposalId)
+  assert.equal(pendingGuidance.status, 'available')
+  assert.equal(pendingGuidance.guidance?.recommendation, 'confirm')
+  assert.deepEqual(pendingGuidance.guidance?.allowedActions, ['confirm', 'reject'])
+  assert.equal(pendingGuidance.guidance?.manualReviewRequired, false)
+  const historyCount = manager.history({ proposalId }).total
+  const inspectCount = adapter.inspectCount + adapter.inspectSourceCount
+  const confirmed = await manager.confirm(proposalId, pending.proposal?.confirmationDigest ?? '')
+
+  const noPatch = manager.inspectRecovery(proposalId)
+  assert.equal(noPatch.guidance?.recommendation, 'prepare-patch')
+  assert.deepEqual(noPatch.guidance?.allowedActions, ['prepare-patch', 'release'])
+  assert.equal(manager.history({ proposalId }).total, historyCount + 1)
+  assert.equal(adapter.inspectCount + adapter.inspectSourceCount, inspectCount)
+
+  const patchDraft = await manager.preparePatch({ proposalId, patchText: validPatch() })
+  const patchPending = manager.inspectRecovery(proposalId)
+  assert.equal(patchPending.guidance?.recommendation, 'confirm-patch')
+  assert.deepEqual(patchPending.guidance?.allowedActions, ['confirm-patch', 'reject-patch', 'release'])
+  const applied = await manager.confirmPatch(patchDraft.proposal?.patch?.patchId ?? '', patchDraft.proposal?.patch?.confirmationDigest ?? '')
+  const patchApplied = manager.inspectRecovery(proposalId)
+  assert.equal(patchApplied.guidance?.recommendation, 'verify-patch')
+  assert.deepEqual(patchApplied.guidance?.allowedActions, ['verify-patch'])
+
+  const verified = await manager.verifyPatch({
+    patchId: applied.proposal?.patch?.patchId ?? '',
+    confirmationDigest: applied.proposal?.patch?.confirmationDigest ?? '',
+    recipeId: 'recovery-guidance',
+  }, passedVerificationRunner())
+  const verifiedGuidance = manager.inspectRecovery(proposalId)
+  assert.equal(verifiedGuidance.guidance?.recommendation, 'prepare-commit')
+  assert.deepEqual(verifiedGuidance.guidance?.allowedActions, ['prepare-commit'])
+
+  const commitDraft = await manager.prepareCommit({ proposalId, commitMessage: 'feat: recovery guidance' })
+  const commitPending = manager.inspectRecovery(proposalId)
+  assert.equal(commitPending.guidance?.recommendation, 'confirm-commit')
+  assert.deepEqual(commitPending.guidance?.allowedActions, ['confirm-commit', 'reject-commit'])
+  const created = await manager.confirmCommit(
+    commitDraft.proposal?.commit?.commitId ?? '',
+    commitDraft.proposal?.commit?.confirmationDigest ?? '',
+    { authorize: async () => ({ allowed: true, auditId: 'recovery-guidance-approval', reason: 'approved' }) },
+  )
+  const commitCreated = manager.inspectRecovery(proposalId)
+  assert.equal(commitCreated.guidance?.recommendation, 'prepare-landing')
+  assert.deepEqual(commitCreated.guidance?.allowedActions, ['prepare-landing', 'release'])
+
+  const landingDraft = await manager.prepareLanding({ proposalId })
+  const landingPending = manager.inspectRecovery(proposalId)
+  assert.equal(landingPending.guidance?.recommendation, 'confirm-landing')
+  assert.deepEqual(landingPending.guidance?.allowedActions, ['confirm-landing', 'reject-landing'])
+  await manager.confirmLanding(
+    landingDraft.proposal?.landing?.landingId ?? '',
+    landingDraft.proposal?.landing?.confirmationDigest ?? '',
+    { authorize: async () => ({ allowed: true, auditId: 'recovery-guidance-landing-approval', reason: 'approved' }) },
+  )
+  const landed = manager.inspectRecovery(proposalId)
+  assert.equal(landed.guidance?.recommendation, 'release')
+  assert.deepEqual(landed.guidance?.allowedActions, ['release'])
+  const released = await manager.release(proposalId)
+  assert.equal(released.status, 'released')
+  const terminal = manager.inspectRecovery(proposalId)
+  assert.equal(terminal.guidance?.recommendation, 'no-action')
+  assert.deepEqual(terminal.guidance?.allowedActions, [])
+  assert.equal(terminal.guidance?.manualReviewRequired, false)
+
+  if (!terminal.guidance) throw new Error('terminal guidance should be available')
+  terminal.guidance.allowedActions = ['confirm']
+  terminal.guidance.proposal.intent = 'caller mutation'
+  const detached = manager.inspectRecovery(proposalId)
+  assert.deepEqual(detached.guidance?.allowedActions, [])
+  assert.notEqual(detached.guidance?.proposal.intent, 'caller mutation')
+  assert.equal(created.operationStatus, 'commit-created')
+  assert.equal(verified.operationStatus, 'patch-verification-passed')
+  assert.equal(manager.history({ proposalId }).total > historyCount, true)
+})
+
+test('recovery guidance is fail-safe for rejected, blocked, interrupted, and uncertain states', async () => {
+  const rejectedManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: new FakeGitAdapter() })
+  rejectedManager.registerSession(createSession())
+  const rejectedPending = await rejectedManager.prepare(request())
+  const rejectedId = rejectedPending.proposal?.proposalId ?? ''
+  rejectedManager.reject(rejectedId)
+  const rejected = rejectedManager.inspectRecovery(rejectedId)
+  assert.equal(rejected.guidance?.recommendation, 'no-action')
+  assert.equal(rejected.guidance?.manualReviewRequired, false)
+
+  const blockedAdapter = new FakeGitAdapter()
+  const blockedManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: blockedAdapter })
+  blockedManager.registerSession(createSession())
+  const blockedPending = await blockedManager.prepare(request())
+  const blockedId = blockedPending.proposal?.proposalId ?? ''
+  blockedAdapter.failDiscovery = true
+  await blockedManager.confirm(blockedId, blockedPending.proposal?.confirmationDigest ?? '')
+  const blocked = blockedManager.inspectRecovery(blockedId)
+  assert.equal(blocked.guidance?.recommendation, 'manual-review-required')
+  assert.deepEqual(blocked.guidance?.allowedActions, [])
+  assert.equal(blocked.guidance?.manualReviewRequired, true)
+
+  const interruptedManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: new FakeGitAdapter() })
+  interruptedManager.registerSession(createSession())
+  const interruptedPending = await interruptedManager.prepare(request())
+  const interruptedController = new AbortController()
+  interruptedController.abort()
+  await interruptedManager.confirm(interruptedPending.proposal?.proposalId ?? '', interruptedPending.proposal?.confirmationDigest ?? '', interruptedController.signal)
+  const interrupted = interruptedManager.inspectRecovery(interruptedPending.proposal?.proposalId ?? '')
+  assert.equal(interrupted.guidance?.recommendation, 'manual-review-required')
+  assert.deepEqual(interrupted.guidance?.allowedActions, [])
+
+  const uncertainAdapter = new FakeGitAdapter()
+  const uncertainManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: uncertainAdapter })
+  uncertainManager.registerSession(createSession())
+  const uncertainDraft = await prepareVerifiedCommitDraft(uncertainManager, passedVerificationRunner(), 'recovery-uncertain')
+  uncertainAdapter.failCommitPostcondition = true
+  await uncertainManager.confirmCommit(
+    uncertainDraft.proposal?.commit?.commitId ?? '',
+    uncertainDraft.proposal?.commit?.confirmationDigest ?? '',
+    { authorize: async () => ({ allowed: true, auditId: 'recovery-uncertain-approval', reason: 'approved' }) },
+  )
+  const uncertainBefore = uncertainManager.history({ proposalId: uncertainDraft.proposal?.proposalId ?? '' }).total
+  const uncertain = uncertainManager.inspectRecovery(uncertainDraft.proposal?.proposalId ?? '')
+  assert.equal(uncertain.guidance?.recommendation, 'manual-review-required')
+  assert.deepEqual(uncertain.guidance?.allowedActions, [])
+  assert.equal(uncertain.guidance?.manualReviewRequired, true)
+  assert.equal(uncertainManager.history({ proposalId: uncertainDraft.proposal?.proposalId ?? '' }).total, uncertainBefore)
+
+  const unknown = uncertainManager.inspectRecovery('proposal-unknown')
+  assert.equal(unknown.status, 'blocked')
+  assert.equal(unknown.guidance, undefined)
 })
 
 test('live inspection reports source and worktree observations without lifecycle mutation', async () => {

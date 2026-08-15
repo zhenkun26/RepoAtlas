@@ -60,6 +60,22 @@ v2.7 的 `repo_atlas_change_proposal` 增加 `inspect-live`。它只从当前 pr
 
 source 与 worktree 检查分别标记 available、unknown 或 not-applicable，overall 状态区分 available、partial、unknown 和 not-applicable。检查失败、AbortSignal 或 uncertain postcondition 只影响 live observation，不改变 proposal、patch、verification、commit、landing 或 release 状态；不会把 `creation-unknown` 升级为 created/landed 或未执行。inspect-live 不请求 approval/Goal，不调用 sandbox/subprocess，不执行 mutation Git、网络、cleanup、持久化或跨 session 操作。
 
+## v2.8 session-only lifecycle event history
+
+v2.8 的 `repo_atlas_change_proposal` 增加 `history`。manager 为当前 session 的每个 proposal 在内存中保留 bounded event timeline，只在 proposal/worktree、patch、verification、commit、landing 或 release 实际状态变更后追加事件；inspect、list、inspect-live、review/export、digest mismatch 和保持 pending 的 approval denial 不追加事件。
+
+事件只包含 phase、proposal/operation/execution 状态快照、bounded/redacted reason、event id、时间和 `sessionOnly=true`。不包含 workspace/repository/worktree path、changed path names、evidence、digest、patch text 或 commit message。history 支持 1 到 100 的 safe-integer limit，按 chronological order 返回最近 retained events，并报告 total/returned/truncated；proposal retention 超限时只淘汰最旧事件。
+
+history 只读取 manager memory，不刷新 source/worktree/Git，不请求 approval/Goal，不调用 sandbox/subprocess，不联网，不写 workspace、磁盘、数据库或远程服务；unknown proposal 和非法 limit fail closed。blocked、interrupted、`patch-application-unknown`、`commit-creation-unknown`、`landing-creation-unknown`、`patch-not-applied`、`commit-not-created` 与 `push-not-performed` 等既有语义原样保留。
+
+## v2.9 read-only recovery guidance
+
+v2.9 的 `repo_atlas_change_proposal` 增加 `inspect-recovery`。它只读取当前 session registry，将 pending、confirmed、patch、verification、commit、landing 和 release 状态映射为现有 lifecycle action 的 bounded recommendation/allowedActions；结果包含 proposal summary、reason、`manualReviewRequired` 和 `sessionOnly=true`。guidance 是决策提示，不是授权、审批、执行结果或成功保证。
+
+`patch-application-unknown`、`commit-creation-unknown`、`landing-creation-unknown`、blocked/interrupted 或无法证明安全继续的 nested 状态，统一返回 `manual-review-required` 和空 allowedActions；rejected/released 等明确终态返回 `no-action`。系统不推荐 uncertain 状态 release，不执行 rollback、reset、revert、merge、冲突解决、cleanup 或其他 recovery。
+
+inspect-recovery 不访问 source/worktree/Git/history、approval、Goal、sandbox、subprocess、network 或 filesystem，不改变 proposal/lifecycle/event history，不持久化、不跨 session，不返回 path、digest、patch text、commit message、evidence、command 或 approval 数据。unknown/空 proposal id fail closed，结果为 detached snapshot。
+
 ## 路径与文件
 
 - workspace 根目录先规范化；包含 `..` 的请求直接拒绝。
@@ -84,4 +100,4 @@ AST 只处理已确认 scope 内的 `.ts`、`.tsx`、`.js`、`.jsx` 脱敏文本
 
 ## 回滚
 
-RepoAtlas 是无迁移的插件。停用 Harness profile 或移除本项目目录即可回滚，不需要恢复数据库或远程配置。v2.7 的 live observation、v2.6 summary listing 与 v2.5 inspection 不新增持久状态；既有 patch/export/verification/commit/landing registry 随进程结束丢弃。source landing 只执行显式确认的 local fast-forward，remote 不会被工具访问或更新。孤儿 worktree 或 landing uncertainty 仍按人工检查和恢复路径处理，工具不会跨 session 自动接管、reset 或删除。
+RepoAtlas 是无迁移的插件。停用 Harness profile 或移除本项目目录即可回滚，不需要恢复数据库或远程配置。v2.9 guidance、v2.8 event history、v2.7 live observation、v2.6 summary listing 与 v2.5 inspection 不新增持久状态；proposal/event 与既有 patch/export/verification/commit/landing registry 随进程结束丢弃。source landing 只执行显式确认的 local fast-forward，remote 不会被工具访问或更新。孤儿 worktree、landing uncertainty、manual-review 状态或被淘汰的历史事件仍按人工检查和恢复路径处理，工具不会跨 session 自动接管、reset、删除、回滚或重建历史。
