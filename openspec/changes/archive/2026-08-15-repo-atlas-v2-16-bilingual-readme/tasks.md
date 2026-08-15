@@ -13,5 +13,5 @@
 ## 3. Verification and handoff
 
 - [x] 3.1 Audit bilingual section coverage, local links, commands, and technical facts
-- [ ] 3.2 Run tests, lint, typecheck, source artifact smoke, release preflight, strict OpenSpec validation, and diff checks
-- [ ] 3.3 Reconcile this task list and archive the completed OpenSpec change
+- [x] 3.2 Run tests, lint, typecheck, source artifact smoke, release preflight, strict OpenSpec validation, and diff checks
+- [x] 3.3 Reconcile this task list and archive the completed OpenSpec change
