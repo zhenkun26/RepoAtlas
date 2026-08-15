@@ -104,6 +104,12 @@ v2.13 将 source-first 作为当前分发决策：`package.json` 继续 `private
 
 外部命令、网络 action、依赖安装、凭据缺失、revision drift 或输出不符合预期都会 fail closed 为“未验收”，不修改 RepoAtlas source workspace，不回滚或清理 Harness checkout，也不把 workflow 定义或 fake-context 测试升级为真实集成成功。MIT 允许使用、修改和再分发并要求保留 notice/disclaimer；项目另行请求公开引用标注 RepoAtlas / 代码星图并链接来源仓库，这两者继续保持分离。
 
+## v2.14 public release preflight
+
+v2.14 的公开 release 准备仍是 repository tooling，不是 RepoAtlas runtime。`npm run verify:release-preflight` 只读取 package/license/NOTICE、support/release 文档、release checklist、active OpenSpec 目录和本地 Git 状态；Git 调用使用固定 argv 与 `shell:false`，不 fetch、不 reset、不 clean、不 commit、不 tag、不 push，不访问网络，也不接收命令、路径或 approval 输入。它输出 bounded JSON 的 `ready`/`blocked`、blocker code、当前 revision 和 branch，并始终报告 `tagCreated:false`、`releaseCreated:false`、`publishPerformed:false`、`networkAccessed:false`。
+
+dirty worktree、active OpenSpec change、缺少 `origin/main`、HEAD drift、source-first/许可证/文档不一致、未完成的 pinned smoke/README recheck、版权持有人未确认或 release notes 未完成，都会保持 `blocked`。`ready` 只表示候选事实在检查时满足声明，不是授权、tag、GitHub Release、npm 包、部署或 support SLA。`.github/workflows/release-preflight.yml` 仅 `workflow_dispatch` 且 `contents: read`，可以安装依赖并运行质量门禁，但不含任何 release side effect。
+
 ## 路径与文件
 
 - workspace 根目录先规范化；包含 `..` 的请求直接拒绝。

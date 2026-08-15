@@ -14,6 +14,6 @@ Please do not open a public issue, discussion, or pull request for an unpatched 
 
 ## Response expectations
 
-Maintainers will acknowledge a private report when practicable, reproduce it in an isolated environment, and coordinate a fix or mitigation before public disclosure. There is currently no guaranteed response time or supported-version SLA; the first public release will establish those commitments separately.
+Maintainers will acknowledge a private report when practicable, reproduce it in an isolated environment, and coordinate a fix or mitigation before public disclosure. There is currently no guaranteed response time or supported-version SLA; the proposed baseline is documented in [the support policy](docs/support-policy.md) and only becomes a project commitment through an explicit release decision.
 
 Security fixes must preserve the existing fail-closed behavior and must be covered by regression tests and an OpenSpec boundary when they add or change capability.

@@ -9,6 +9,7 @@ All notable RepoAtlas changes will be documented here. Until the first public ta
 - v2.11 session-only `inspect-release` readiness observation for managed worktrees.
 - Source-first public release baseline: license, contribution and security guidance, CI gates, and release checklist.
 - v2.13 source-distribution evaluation: local packed-install smoke, pinned public Harness compatibility manifest, and an explicit manual smoke workflow.
+- v2.14 public-release preparation: proposed support policy, source-first release procedure, and read-only candidate preflight.
 
 ### Security
 

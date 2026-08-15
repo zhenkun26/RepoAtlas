@@ -30,6 +30,7 @@
     "lint": "node scripts/lint.mjs",
     "verify:source-artifact": "node scripts/verify-source-artifact.mjs",
     "verify:harness-compatibility": "node scripts/verify-harness-compatibility.mjs",
+    "verify:release-preflight": "node scripts/verify-release-preflight.mjs",
     "validate:openspec": "openspec validate --all --strict --no-interactive",
     "validate:openspec:change": "openspec validate --strict --no-interactive"
   },

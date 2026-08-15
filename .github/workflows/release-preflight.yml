@@ -1,0 +1,47 @@
+name: Release preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Source-first release candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Safety lint
+        run: npm run lint
+
+      - name: Verify local source artifact
+        run: npm run verify:source-artifact
+
+      - name: Validate OpenSpec specs
+        run: npx --yes @fission-ai/openspec@1.7.0 validate --all --strict --no-interactive
+
+      - name: Verify release candidate
+        run: npm run verify:release-preflight
+
+      - name: Check patch formatting
+        run: git diff --check

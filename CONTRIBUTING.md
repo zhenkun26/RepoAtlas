@@ -39,4 +39,4 @@ The CI workflow is authoritative for the minimum gates. A failed or unavailable 
 
 ## Release work
 
-RepoAtlas is currently source-first and `package.json` remains `private: true`. Follow [the release checklist](docs/release-checklist.md) for the separate decisions and approvals required before a tag, package publication, or public release. Public references and integrations should identify RepoAtlas / 代码星图 and link the source repository as described in [NOTICE](NOTICE.md).
+RepoAtlas is currently source-first and `package.json` remains `private: true`. Follow [the release checklist](docs/release-checklist.md), [support policy](docs/support-policy.md), and [source-first release process](docs/release-process.md) for the separate decisions and approvals required before a tag, package publication, or public release. Public references and integrations should identify RepoAtlas / 代码星图 and link the source repository as described in [NOTICE](NOTICE.md).

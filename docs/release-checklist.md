@@ -17,8 +17,8 @@ This checklist describes release readiness; it is not an instruction to publish,
 - [x] Local core API and plugin imports remain covered by the existing test suite.
 - [x] Fake-context Harness registration and action contract tests remain green.
 - [x] Add a reproducible clean-checkout and packed-install evaluation: default CI starts from a clean checkout and runs `npm run verify:source-artifact` on Node.js 22/24.
-- [ ] Run a pinned real DeepSeek Harness smoke test and record the compatible revision.
-- [ ] Recheck README installation instructions against the actual public Harness release.
+- [x] Run a pinned real DeepSeek Harness smoke test and record the compatible revision: `47f943859bef60e4160492346772ded9b24f765a` with Node 24.x and pnpm 11.7.0.
+- [x] Recheck README installation instructions against the actual public Harness release at the pinned revision.
 
 ## Distribution decision
 
@@ -31,10 +31,12 @@ This checklist describes release readiness; it is not an instruction to publish,
 
 - [x] Complete and independently close the v2.11 OpenSpec change through its authorized sync/archive workflow.
 - [x] Complete the v2.12 public-release-readiness change and preserve the MIT attribution/provenance guidance; named copyright-holder confirmation remains pending.
+- [x] Document the proposed source-first support policy and manual release procedure; adoption remains a separate maintainer decision.
+- [ ] Run `npm run verify:release-preflight` successfully on the final reviewed candidate.
 - [ ] Create release notes from the changelog and verify the exact commit to be tagged.
 - [ ] Create the first tag and GitHub Release only with explicit authorization.
 - [ ] Publish or push only through the separately approved release procedure.
 
 ## Explicit non-claims
 
-Until the unchecked items above are resolved, RepoAtlas must not claim that it has a public npm package, a compiled distribution, a completed real-Harness compatibility run, a support SLA, or a completed public release. The manual workflow and local artifact smoke are evaluation mechanisms, not those claims.
+Until the unchecked items above are resolved, RepoAtlas must not claim that it has a public npm package, a compiled distribution, an adopted support SLA, or a completed public release. The pinned Harness smoke is complete evidence, while the preflight remains candidate evidence and does not create release state.

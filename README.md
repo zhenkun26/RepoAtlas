@@ -21,7 +21,7 @@ RepoAtlas 是一个面向 DeepSeek Harness 的安全只读代码库分析插件�
 
 ## 开源化状态
 
-当前仓库继续采用源码优先分发：根目录包含 MIT 工作许可证、贡献/安全/行为规范和变更记录，GitHub Actions 在 Node.js 22/24 上运行质量门禁，并在本地验证 source tarball 可离线安装。`package.json` 仍保持 `private: true`；这份 tarball 检查不等于 npm 发布包或普通 Node consumer import 契约。真实 Harness 兼容 smoke 已固定公开 revision，并只通过手动 workflow 执行；在成功运行被审阅前，不宣称真实 Harness 支持或首个公开 release。详见 [公开发布 checklist](docs/release-checklist.md) 和 [后续路线](docs/roadmap.md)。
+当前仓库继续采用源码优先分发：根目录包含 MIT 工作许可证、贡献/安全/行为规范和变更记录，GitHub Actions 在 Node.js 22/24 上运行质量门禁，并在本地验证 source tarball 可离线安装。`package.json` 仍保持 `private: true`；这份 tarball 检查不等于 npm 发布包或普通 Node consumer import 契约。真实 Harness 兼容 smoke 已在公开 pinned revision 上通过，但这仍不等于首个公开 release。支持基线和 release 流程见 [support policy](docs/support-policy.md)、[source-first release process](docs/release-process.md)、[公开发布 checklist](docs/release-checklist.md) 和 [后续路线](docs/roadmap.md)。
 
 ## 授权与来源说明
 
@@ -46,6 +46,12 @@ npm run validate:openspec
 git diff --check
 ```
 
+公开 release candidate 的只读检查不是日常质量门禁；在版权持有人确认和 release notes 完成前，它会按设计返回 `blocked`：
+
+```bash
+npm run verify:release-preflight
+```
+
 Node.js 24 可直接运行仓库中的 TypeScript 测试；`npm run typecheck` 用于检查 `src/` 和 `test/` 的完整类型契约。
 
 如果本机没有 `openspec` CLI，OpenSpec 门禁可以通过固定版本的临时 CLI 执行：
@@ -61,7 +67,7 @@ REPO_ATLAS_HARNESS_ROOT=/absolute/path/to/deepseek-harness \
   node scripts/verify-harness-compatibility.mjs
 ```
 
-该命令和 [手动 Harness workflow](.github/workflows/harness-compatibility.yml) 只用于显式兼容性验收，不是插件 runtime 能力；在 workflow 成功运行并审阅前，fake-context 测试和 workflow 文件本身都不能表述为真实 Harness 集成已完成。普通 npm consumer 直接 import 当前源码 `.ts` entry point 也不属于支持契约，因为 Node 的 built-in TypeScript stripping 会拒绝从 `node_modules` 加载这类文件。
+该命令和 [手动 Harness workflow](.github/workflows/harness-compatibility.yml) 只用于显式兼容性验收，不是插件 runtime 能力。普通 npm consumer 直接 import 当前源码 `.ts` entry point 也不属于支持契约，因为 Node 的 built-in TypeScript stripping 会拒绝从 `node_modules` 加载这类文件。
 
 ## 直接调用核心 API
 
@@ -83,4 +89,6 @@ console.log(report.markdown)
 - [公开贡献说明](CONTRIBUTING.md)
 - [安全报告](SECURITY.md)
 - [授权与来源说明](NOTICE.md)
+- [支持策略](docs/support-policy.md)
+- [源码优先 release 流程](docs/release-process.md)
 - [公开发布 checklist](docs/release-checklist.md)

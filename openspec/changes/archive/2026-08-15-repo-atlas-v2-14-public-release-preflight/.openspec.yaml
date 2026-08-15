@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-08-15
+goal: Define and verify a source-first public release candidate without creating release side effects
