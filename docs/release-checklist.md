@@ -39,7 +39,7 @@ This checklist describes release readiness; it is not an instruction to publish,
 - [x] Complete and independently close the v2.11 OpenSpec change through its authorized sync/archive workflow.
 - [x] Complete the v2.12 public-release-readiness change and preserve the MIT attribution/provenance guidance; the named copyright-holder confirmation is recorded.
 - [x] Document the proposed source-first support policy and manual release procedure; adoption remains a separate maintainer decision.
-- [ ] Run `npm run verify:release-preflight` successfully on the final reviewed candidate.
+- [x] Run `npm run verify:release-preflight` successfully on the final reviewed candidate; the clean candidate check passed before the evidence-record update.
 - [x] Create release notes from the changelog; the exact commit to be tagged is rechecked immediately before tagging.
 - [ ] Create the separate `v0.1.1` tag and GitHub Release only with explicit authorization; never move `v0.1.0`.
 - [ ] Publish or push only through the separately approved release procedure.

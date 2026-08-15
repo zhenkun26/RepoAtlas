@@ -18,6 +18,6 @@
 
 ## 4. Verification and handoff
 
-- [ ] 4.1 Run the full final-candidate verification on a clean, archived candidate; the apply-stage run is intentionally blocked by the active OpenSpec change and dirty worktree
+- [x] 4.1 Run the full final-candidate verification on a clean, archived candidate; the clean candidate passed all listed gates
 - [x] 4.2 Reconcile the task list and archive the completed OpenSpec change only after implementation evidence is complete
-- [ ] 4.3 Report the exact reviewed candidate revision and explicitly record that no tag, GitHub Release, npm publication, push, deployment, or remote metadata mutation was performed
+- [x] 4.3 Report the exact reviewed candidate revision and explicitly record that no tag, GitHub Release, npm publication, push, deployment, or remote metadata mutation was performed
