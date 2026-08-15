@@ -14,6 +14,14 @@ RepoAtlas v1.3 的默认权限是只读。Policy Gate 只允许列举、读取�
 
 审批由 Harness 写入 `approval/asked`/`approval/decided`，工具调用结果由 Harness 写入 `tool/call`/`tool/result`；RepoAtlas 返回关联 audit id、退出状态、受限输出和脱敏状态。沙箱不可用或 enforcement 为 partial 时故障关闭。
 
+## v2.2 patch review、export 与 verification
+
+v2.2 的 `repo_atlas_change_proposal` 增加 `review-patch`、`export-patch` 和 `verify-patch`。review 只返回当前 session 的 bounded patch descriptor；export 必须提供完全匹配的 patch digest，只把 canonical patch text 作为当前 tool result 返回，不创建 workspace 文件、缓存、数据库记录或远程上传。
+
+verification 只能指向已应用、仍由当前 session 拥有且 identity/base revision 未变化的 detached worktree。recipe 必须是显式配置、enabled 且 `read-only`；执行仍需要 Harness active+armed Goal、一次性 `allowed-once` approval、完整 `sandboxPolicy`、`sandbox` 和 `subprocess` 能力。模型不能提供执行 root、任意命令、参数或 Shell；root 由 proposal manager 传入并必须与 Harness resolved policy 完全匹配。
+
+verification stdout/stderr 继续受 recipe 输出预算限制并执行 Secret-like 脱敏。verification status 与 `patch-applied`、`commit-not-created`、`push-not-performed` 分离；失败、中止、超时、sandbox 不可用或 postcondition 不确定时，不把 patch 报告为未应用，不执行逆补丁、`git clean`、force rollback 或 release。
+
 ## 路径与文件
 
 - workspace 根目录先规范化；包含 `..` 的请求直接拒绝。
@@ -38,4 +46,4 @@ AST 只处理已确认 scope 内的 `.ts`、`.tsx`、`.js`、`.jsx` 脱敏文本
 
 ## 回滚
 
-RepoAtlas 是无迁移的插件。停用 Harness profile 或移除本项目目录即可回滚，不需要恢复数据库或远程配置。
+RepoAtlas 是无迁移的插件。停用 Harness profile 或移除本项目目录即可回滚，不需要恢复数据库或远程配置。v2.2 的 session-only patch/export/verification registry 随进程结束丢弃；孤儿 worktree 仍按 v2.1 的人工检查和清理路径处理，工具不会跨 session 自动接管或删除。

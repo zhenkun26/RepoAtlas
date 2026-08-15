@@ -10,7 +10,7 @@ export interface ControlledActionPolicy {
 }
 
 export interface ControlledActionPolicyResolver {
-  resolve(request: { mode: ControlledActionSandboxMode; session?: ControlledActionRequest['session'] }): ControlledActionPolicy
+  resolve(request: { mode: ControlledActionSandboxMode; session?: ControlledActionRequest['session']; workspaceRoot?: string }): ControlledActionPolicy
 }
 
 export interface ControlledActionRunnerFailureRule {
@@ -101,6 +101,7 @@ export async function runControlledAction(
 
   const recipe = decision.recipe
   const cwd = decision.cwd
+  const executionRoot = request.workspaceRoot ?? config.workspaceRoot
   if (!recipe || !cwd) return deniedResult({ ...decision, allowed: false, reason: 'approved action is missing its recipe or cwd' })
   if (!runtime.sandbox || !runtime.subprocess || !runtime.sandboxPolicy) {
     return unavailableResult(decision, 'Harness sandbox, subprocess, and sandboxPolicy capabilities are required')
@@ -108,14 +109,14 @@ export async function runControlledAction(
 
   let policy: ControlledActionPolicy
   try {
-    policy = runtime.sandboxPolicy.resolve({ mode: recipe.sandboxMode, session: request.session })
+    policy = runtime.sandboxPolicy.resolve({ mode: recipe.sandboxMode, session: request.session, workspaceRoot: executionRoot })
   } catch (error) {
     return unavailableResult(decision, `sandbox policy resolution failed: ${redactError(error)}`)
   }
   if (policy.mode !== recipe.sandboxMode) {
     return unavailableResult(decision, 'resolved sandbox mode does not match the approved recipe')
   }
-  if (path.resolve(policy.workspaceRoot) !== path.resolve(config.workspaceRoot)) {
+  if (path.resolve(policy.workspaceRoot) !== path.resolve(executionRoot)) {
     return unavailableResult(decision, 'resolved sandbox workspace does not match the approved workspace')
   }
 

@@ -13,11 +13,14 @@ import type {
   ChangeProposalPatch,
   ChangeProposalPatchFileSummary,
   ChangeProposalPatchRequest,
+  ChangeProposalPatchExport,
   ChangeProposalPatchSummary,
   ChangeProposalOperation,
   ChangeProposalRequest,
   ChangeProposalResult,
   ChangeProposalTarget,
+  ChangeProposalVerification,
+  ChangeProposalVerifyPatchRequest,
   ChangeProposalWorktree,
   RepoAtlasConfig,
 } from '../types.ts'
@@ -62,6 +65,20 @@ export interface GitWorktreeAdapter {
   inspect(repositoryRoot: string, worktree: ChangeProposalWorktree, signal?: AbortSignal): Promise<InspectedWorktree>
   applyPatch(repositoryRoot: string, worktree: ChangeProposalWorktree, patchText: string, workspaceRelativeRoot: string, signal?: AbortSignal): Promise<void>
   remove(repositoryRoot: string, worktree: ChangeProposalWorktree, signal?: AbortSignal): Promise<void>
+}
+
+export interface ChangeProposalVerificationExecution {
+  callId?: string
+  agent?: { session: { header?: { cwd?: string } } }
+}
+
+export interface ChangeProposalVerificationRunner {
+  run(request: {
+    recipeId: string
+    worktree: ChangeProposalWorktree
+    execution?: ChangeProposalVerificationExecution
+    signal?: AbortSignal
+  }): Promise<ChangeProposalVerification>
 }
 
 interface StoredPatchDraft {
@@ -230,12 +247,46 @@ export class ChangeProposalManager {
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + this.limits.expirationMs).toISOString(),
       executionStatus: 'patch-not-applied',
+      verificationStatus: 'not-run',
     }
     patch.confirmationDigest = createPatchDigest(proposal, patch, validation.parsed.canonicalText)
     proposal.patch = patch
     proposal.operationStatus = 'patch-awaiting-confirmation'
     this.patches.set(patch.patchId, { proposalId: proposal.proposalId, patchText: validation.parsed.canonicalText, patch })
     return resultFor(proposal, 'patch draft prepared; exact patch digest confirmation is required before application')
+  }
+
+  reviewPatch(patchId: string): ChangeProposalResult {
+    const draft = this.patches.get(patchId)
+    if (!draft) return blockedResult('blocked', 'patch draft is unknown to the current session')
+    const proposal = this.proposals.get(draft.proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal for this patch draft is no longer available')
+    return resultFor(proposal, 'patch review descriptor returned; no files were modified')
+  }
+
+  exportPatch(patchId: string, confirmationDigest: string): ChangeProposalResult {
+    const draft = this.patches.get(patchId)
+    if (!draft) return blockedResult('blocked', 'patch draft is unknown to the current session')
+    const proposal = this.proposals.get(draft.proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal for this patch draft is no longer available')
+    if (!sameDigest(draft.patch.confirmationDigest, confirmationDigest)) return resultFor(proposal, 'patch export digest does not match the canonical draft')
+    if (draft.patch.status === 'awaiting-confirmation' && Date.now() >= Date.parse(draft.patch.expiresAt)) {
+      return updatePatchFailure(proposal, draft.patch, 'blocked', 'patch export window has expired')
+    }
+    if (draft.patch.status !== 'awaiting-confirmation' && draft.patch.status !== 'applied') {
+      return resultFor(proposal, 'only an awaiting-confirmation or applied patch can be exported')
+    }
+    if (proposal.status !== 'confirmed' || !proposal.worktree) return resultFor(proposal, 'patch export requires the confirmed session-owned proposal worktree')
+    const patchExport: ChangeProposalPatchExport = {
+      patchId: draft.patch.patchId,
+      proposalId: proposal.proposalId,
+      confirmationDigest: draft.patch.confirmationDigest,
+      patchText: draft.patchText,
+      summary: clonePatchSummary(draft.patch.summary),
+      sessionOnly: true,
+      exportedAt: new Date().toISOString(),
+    }
+    return { ...resultFor(proposal, 'canonical patch exported in the current session only'), patchExport }
   }
 
   async confirmPatch(patchId: string, confirmationDigest: string, signal?: AbortSignal): Promise<ChangeProposalResult> {
@@ -298,6 +349,51 @@ export class ChangeProposalManager {
     draft.patch.status = 'rejected'
     proposal.operationStatus = 'patch-rejected'
     return resultFor(proposal, 'patch draft rejected; no files were modified')
+  }
+
+  async verifyPatch(
+    request: ChangeProposalVerifyPatchRequest,
+    runner: ChangeProposalVerificationRunner | undefined,
+    execution?: ChangeProposalVerificationExecution,
+    signal?: AbortSignal,
+  ): Promise<ChangeProposalResult> {
+    const draft = this.patches.get(request.patchId)
+    if (!draft) return blockedResult('blocked', 'patch draft is unknown to the current session')
+    const proposal = this.proposals.get(draft.proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal for this patch draft is no longer available')
+    if (draft.patch.verificationStatus !== 'not-run' && draft.patch.verification) return resultForWithVerification(proposal, 'patch verification already has a terminal result', draft.patch.verification)
+    if (!sameDigest(draft.patch.confirmationDigest, request.confirmationDigest)) return resultFor(proposal, 'patch verification digest does not match the canonical draft')
+    if (draft.patch.status !== 'applied' || proposal.status !== 'confirmed' || !proposal.worktree) return resultFor(proposal, 'patch verification requires an applied patch in a confirmed session-owned worktree')
+    if (!runner) return recordVerification(proposal, draft.patch, unavailableVerification(request.recipeId, proposal.worktree.identity, 'patch verification runner is unavailable'))
+    if (signal?.aborted) return recordVerification(proposal, draft.patch, unavailableVerification(request.recipeId, proposal.worktree.identity, 'patch verification was interrupted before execution', 'interrupted'))
+
+    let before: InspectedWorktree
+    try {
+      before = await this.adapter.inspect(proposal.repositoryRoot, proposal.worktree, signal)
+    } catch (error) {
+      return recordVerification(proposal, draft.patch, unavailableVerification(request.recipeId, proposal.worktree.identity, `patch verification precondition inspection failed: ${redactError(error)}`, signal?.aborted ? 'interrupted' : 'blocked'))
+    }
+    const expectedPaths = new Set(draft.patch.summary.files.map((file) => file.relativePath))
+    if (before.identity !== proposal.worktree.identity || before.baseRevision !== proposal.baseRevision || !before.dirty || !before.changedPaths.length || before.changedPaths.some((changedPath) => !expectedPaths.has(changedPath))) {
+      return recordVerification(proposal, draft.patch, unavailableVerification(request.recipeId, proposal.worktree.identity, 'patch verification preconditions no longer match the applied patch', 'blocked'))
+    }
+
+    let verification: ChangeProposalVerification
+    try {
+      verification = await runner.run({ recipeId: request.recipeId, worktree: proposal.worktree, execution, signal })
+    } catch (error) {
+      verification = unavailableVerification(request.recipeId, proposal.worktree.identity, `patch verification runner failed closed: ${redactError(error)}`, signal?.aborted ? 'interrupted' : 'blocked')
+    }
+    verification = boundVerification(verification, this.limits.maxTextBytes)
+    try {
+      const after = await this.adapter.inspect(proposal.repositoryRoot, proposal.worktree, signal)
+      if (after.identity !== proposal.worktree.identity || after.baseRevision !== proposal.baseRevision || after.changedPaths.some((changedPath) => !expectedPaths.has(changedPath)) || !samePathSet(before.changedPaths, after.changedPaths)) {
+        verification = { ...verification, status: 'blocked', reason: 'verification postcondition found an identity, revision, or path change outside the applied patch' }
+      }
+    } catch (error) {
+      verification = { ...verification, status: signal?.aborted ? 'interrupted' : 'blocked', reason: `patch verification postcondition is unknown; worktree was retained: ${redactError(error)}` }
+    }
+    return recordVerification(proposal, draft.patch, verification)
   }
 
   reject(proposalId: string): ChangeProposalResult {
@@ -687,6 +783,70 @@ function updatePatchFailure(
   return resultFor(proposal, reason)
 }
 
+function recordVerification(
+  proposal: ChangeProposal,
+  patch: ChangeProposalPatch,
+  verification: ChangeProposalVerification,
+): ChangeProposalResult {
+  patch.verificationStatus = verification.status
+  patch.verification = verification
+  proposal.operationStatus = verificationOperationStatus(verification.status)
+  return resultForWithVerification(proposal, verification.reason, verification)
+}
+
+function resultForWithVerification(proposal: ChangeProposal, reason: string, verification: ChangeProposalVerification): ChangeProposalResult {
+  return { ...resultFor(proposal, reason), verification: { ...verification } }
+}
+
+function verificationOperationStatus(status: ChangeProposalVerification['status']): ChangeProposal['operationStatus'] {
+  if (status === 'passed') return 'patch-verification-passed'
+  if (status === 'interrupted' || status === 'cancelled') return 'patch-verification-interrupted'
+  if (status === 'failed' || status === 'timed-out') return 'patch-verification-failed'
+  return 'patch-verification-blocked'
+}
+
+function unavailableVerification(
+  recipeId: string,
+  worktreeIdentity: string,
+  reason: string,
+  status: ChangeProposalVerification['status'] = 'blocked',
+): ChangeProposalVerification {
+  return {
+    verificationId: `verification-${randomUUID()}`,
+    auditId: `verification-${randomUUID()}`,
+    recipeId,
+    status,
+    reason,
+    worktreeIdentity,
+    stdout: '',
+    stderr: '',
+    outputTruncated: false,
+    redacted: false,
+    redactedMatchCount: 0,
+    createdAt: new Date().toISOString(),
+  }
+}
+
+function samePathSet(left: readonly string[], right: readonly string[]): boolean {
+  return [...new Set(left)].sort().join('\0') === [...new Set(right)].sort().join('\0')
+}
+
+function clonePatchSummary(summary: ChangeProposalPatchSummary): ChangeProposalPatchSummary {
+  return {
+    ...summary,
+    files: summary.files.map((file) => ({ ...file })),
+  }
+}
+
+function boundVerification(verification: ChangeProposalVerification, maxBytes: number): ChangeProposalVerification {
+  return {
+    ...verification,
+    reason: boundedRedactedText(verification.reason, maxBytes),
+    stdout: boundedRedactedText(verification.stdout, maxBytes),
+    stderr: boundedRedactedText(verification.stderr, maxBytes),
+  }
+}
+
 function workspaceRelativeRoot(proposal: ChangeProposal): string {
   const relative = path.relative(path.resolve(proposal.repositoryRoot), path.resolve(proposal.workspaceRoot))
   if (path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) throw new Error('proposal workspace is outside the repository root')
@@ -757,10 +917,8 @@ function cloneProposal(proposal: ChangeProposal): ChangeProposal {
     patch: proposal.patch ? {
       ...proposal.patch,
       limitations: [...proposal.patch.limitations],
-      summary: {
-        ...proposal.patch.summary,
-        files: proposal.patch.summary.files.map((file) => ({ ...file })),
-      },
+      summary: clonePatchSummary(proposal.patch.summary),
+      verification: proposal.patch.verification ? { ...proposal.patch.verification } : undefined,
     } : undefined,
   }
 }

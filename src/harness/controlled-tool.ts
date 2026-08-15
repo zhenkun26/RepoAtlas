@@ -20,7 +20,7 @@ interface HarnessGoalService {
 }
 
 interface HarnessSandboxPolicyService {
-  resolve(request: { mode: ControlledActionSandboxMode; session?: HarnessSession }): {
+  resolve(request: { mode: ControlledActionSandboxMode; session?: HarnessSession; workspaceRoot?: string }): {
     mode: string
     workspaceRoot: string
     sessionId?: string
@@ -150,7 +150,7 @@ function createControlledActionRuntime(ctx: HarnessPluginContext, execution: Har
   const sandboxPolicy = ctx.get?.<HarnessSandboxPolicyService>('sandboxPolicy')
   const policy: ControlledActionPolicyResolver | undefined = sandboxPolicy === undefined ? undefined : {
     resolve(request) {
-      const resolved = sandboxPolicy.resolve({ mode: request.mode, session: execution.agent?.session })
+      const resolved = sandboxPolicy.resolve({ mode: request.mode, session: execution.agent?.session, workspaceRoot: request.workspaceRoot })
       if (resolved.mode !== 'read-only' && resolved.mode !== 'workspace-write') {
         throw new Error('unsupported sandbox mode returned by Harness')
       }

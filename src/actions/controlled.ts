@@ -8,6 +8,8 @@ export interface ControlledActionSession {
 export interface ControlledActionRequest {
   recipeId: string
   cwd?: string
+  /** Host-controlled execution root; never populate this from model arguments. */
+  workspaceRoot?: string
   session?: ControlledActionSession
   /** Host-attested facts; never populate these from model arguments. */
   goalConfirmed: boolean
@@ -31,7 +33,7 @@ export function decideControlledAction(config: RepoAtlasConfig, request: Control
   if (!request.goalConfirmed) return denied(request.recipeId, auditId, 'confirmed GoalSpec is required before an action')
   const recipe = config.controlledActions.recipes.find((candidate) => candidate.id === request.recipeId && candidate.enabled)
   if (!recipe) return denied(request.recipeId, auditId, 'recipe is not configured and enabled')
-  const path = checkWorkspacePath(config.workspaceRoot, request.cwd ?? '.')
+  const path = checkWorkspacePath(request.workspaceRoot ?? config.workspaceRoot, request.cwd ?? '.')
   if (!path.allowed) return { ...denied(request.recipeId, auditId, path.reason), cwd: path.absolutePath }
   if (!request.userConfirmed) return denied(request.recipeId, auditId, request.confirmationReason ?? 'explicit confirmation is required for this action')
   return {

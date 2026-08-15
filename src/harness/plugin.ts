@@ -4,6 +4,7 @@ import { generateReport } from '../reporting/report.ts'
 import { createConfig } from '../config.ts'
 import { createControlledActionTool } from './controlled-tool.ts'
 import { createChangeProposalTool } from './change-proposal-tool.ts'
+import { createChangeProposalVerificationRunner } from './change-proposal-verification.ts'
 import { ChangeProposalManager } from '../repository/change-proposal.ts'
 import type { GoalSpec } from '../types.ts'
 import type { HarnessPluginContext, HarnessTool, RepoAtlasPluginConfig, RepoAtlasToolResult } from './public.ts'
@@ -14,8 +15,9 @@ export const inject = ['tools'] as const
 export function apply(ctx: HarnessPluginContext, pluginConfig: RepoAtlasPluginConfig = {}): void {
   const config = createConfig(pluginConfig.workspaceRoot ?? process.cwd(), pluginConfig)
   const proposalManager = new ChangeProposalManager(config)
+  const verificationRunner = createChangeProposalVerificationRunner(config, ctx)
   ctx.tools.register(createRepoAtlasTool(config.workspaceRoot, pluginConfig, proposalManager))
-  ctx.tools.register(createChangeProposalTool(proposalManager))
+  ctx.tools.register(createChangeProposalTool(proposalManager, verificationRunner))
   if (config.controlledActions.enabled) ctx.tools.register(createControlledActionTool(config, ctx))
   ctx.logger?.info('RepoAtlas registered read-only analysis tool')
   ctx.logger?.info('RepoAtlas registered session-only change proposal tool')

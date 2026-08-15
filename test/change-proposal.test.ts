@@ -5,10 +5,10 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { ChangeProposalManager, createNodeGitWorktreeAdapter, type GitWorktreeAdapter } from '../src/repository/change-proposal.ts'
+import { ChangeProposalManager, createNodeGitWorktreeAdapter, type ChangeProposalVerificationRunner, type GitWorktreeAdapter } from '../src/repository/change-proposal.ts'
 import { createConfig } from '../src/config.ts'
 import { createEvidence } from '../src/evidence.ts'
-import type { AnalysisSession, ChangeProposalRequest, ChangeProposalWorktree } from '../src/types.ts'
+import type { AnalysisSession, ChangeProposalRequest, ChangeProposalVerification, ChangeProposalWorktree } from '../src/types.ts'
 
 const execFileAsync = promisify(execFile)
 const fixtureRoot = path.resolve('test/fixtures/complete-repo')
@@ -255,6 +255,141 @@ test('patch lifecycle requires a second exact digest and retains applied dirty w
   const release = await manager.release(draft.proposal?.proposalId ?? '')
   assert.equal(release.status, 'blocked')
   assert.equal(adapter.removeCount, 0)
+})
+
+test('patch review and export require the exact digest without mutating the worktree', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+  const pending = await manager.prepare(request())
+  const confirmed = await manager.confirm(pending.proposal?.proposalId ?? '', pending.proposal?.confirmationDigest ?? '')
+  const draft = await manager.preparePatch({ proposalId: confirmed.proposal?.proposalId ?? '', patchText: validPatch('exported') })
+  const patchId = draft.proposal?.patch?.patchId ?? ''
+  const digest = draft.proposal?.patch?.confirmationDigest ?? ''
+
+  const reviewed = manager.reviewPatch(patchId)
+  assert.equal(reviewed.proposal?.patch?.status, 'awaiting-confirmation')
+  assert.equal(adapter.applyPatchCount, 0)
+
+  const mismatch = manager.exportPatch(patchId, '0'.repeat(64))
+  assert.equal(mismatch.patchExport, undefined)
+  assert.equal(mismatch.proposal?.patch?.status, 'awaiting-confirmation')
+  assert.equal(adapter.applyPatchCount, 0)
+
+  const exported = manager.exportPatch(patchId, digest)
+  assert.equal(exported.patchExport?.sessionOnly, true)
+  assert.equal(exported.patchExport?.patchText, validPatch('exported'))
+  assert.equal(exported.patchExport?.confirmationDigest, digest)
+  assert.equal(exported.proposal?.patch?.status, 'awaiting-confirmation')
+  assert.equal(exported.proposal?.executionStatus.patch, 'patch-not-applied')
+  assert.equal(exported.proposal?.commitCreated, false)
+  assert.equal(exported.proposal?.pushPerformed, false)
+  assert.equal(adapter.applyPatchCount, 0)
+})
+
+test('patch verification is digest-bound, read-only at the manager boundary, and non-replayable', async () => {
+  const adapter = new FakeGitAdapter()
+  let runnerCalls = 0
+  const runner: ChangeProposalVerificationRunner = {
+    async run({ recipeId, worktree }): Promise<ChangeProposalVerification> {
+      runnerCalls += 1
+      return {
+        verificationId: `verification-${runnerCalls}`,
+        auditId: `audit-${runnerCalls}`,
+        recipeId,
+        status: 'passed',
+        reason: 'verification completed successfully',
+        worktreeIdentity: worktree.identity,
+        stdout: 'ok',
+        stderr: '',
+        outputTruncated: false,
+        redacted: false,
+        redactedMatchCount: 0,
+        exitCode: 0,
+        signal: null,
+        createdAt: new Date().toISOString(),
+      }
+    },
+  }
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+  const pending = await manager.prepare(request())
+  const confirmed = await manager.confirm(pending.proposal?.proposalId ?? '', pending.proposal?.confirmationDigest ?? '')
+  const draft = await manager.preparePatch({ proposalId: confirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  const applied = await manager.confirmPatch(draft.proposal?.patch?.patchId ?? '', draft.proposal?.patch?.confirmationDigest ?? '')
+  const verifyRequest = {
+    patchId: applied.proposal?.patch?.patchId ?? '',
+    confirmationDigest: applied.proposal?.patch?.confirmationDigest ?? '',
+    recipeId: 'test',
+  }
+
+  const mismatch = await manager.verifyPatch({ ...verifyRequest, confirmationDigest: '0'.repeat(64) }, runner)
+  assert.equal(mismatch.proposal?.patch?.verificationStatus, 'not-run')
+  assert.equal(runnerCalls, 0)
+
+  const verified = await manager.verifyPatch(verifyRequest, runner)
+  assert.equal(verified.operationStatus, 'patch-verification-passed')
+  assert.equal(verified.proposal?.patch?.verificationStatus, 'passed')
+  assert.equal(verified.proposal?.executionStatus.patch, 'patch-applied')
+  assert.equal(verified.proposal?.commitCreated, false)
+  assert.equal(verified.proposal?.pushPerformed, false)
+  assert.equal(verified.verification?.stdout, 'ok')
+  assert.equal(runnerCalls, 1)
+
+  const replay = await manager.verifyPatch(verifyRequest, runner)
+  assert.equal(replay.operationStatus, 'patch-verification-passed')
+  assert.equal(runnerCalls, 1)
+})
+
+test('patch verification fails closed for missing runner, abort, and unexpected worktree changes', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+  const pending = await manager.prepare(request())
+  const confirmed = await manager.confirm(pending.proposal?.proposalId ?? '', pending.proposal?.confirmationDigest ?? '')
+  const draft = await manager.preparePatch({ proposalId: confirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  const applied = await manager.confirmPatch(draft.proposal?.patch?.patchId ?? '', draft.proposal?.patch?.confirmationDigest ?? '')
+  const verifyRequest = {
+    patchId: applied.proposal?.patch?.patchId ?? '',
+    confirmationDigest: applied.proposal?.patch?.confirmationDigest ?? '',
+    recipeId: 'missing',
+  }
+  const unavailable = await manager.verifyPatch(verifyRequest, undefined)
+  assert.equal(unavailable.operationStatus, 'patch-verification-blocked')
+  assert.equal(unavailable.proposal?.patch?.status, 'applied')
+  assert.equal(unavailable.proposal?.executionStatus.patch, 'patch-applied')
+
+  const secondManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: new FakeGitAdapter() })
+  secondManager.registerSession(createSession())
+  const secondPending = await secondManager.prepare(request())
+  const secondConfirmed = await secondManager.confirm(secondPending.proposal?.proposalId ?? '', secondPending.proposal?.confirmationDigest ?? '')
+  const secondDraft = await secondManager.preparePatch({ proposalId: secondConfirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  const secondApplied = await secondManager.confirmPatch(secondDraft.proposal?.patch?.patchId ?? '', secondDraft.proposal?.patch?.confirmationDigest ?? '')
+  const aborted = new AbortController()
+  aborted.abort()
+  const interrupted = await secondManager.verifyPatch({
+    patchId: secondApplied.proposal?.patch?.patchId ?? '',
+    confirmationDigest: secondApplied.proposal?.patch?.confirmationDigest ?? '',
+    recipeId: 'test',
+  }, { run: async () => { throw new Error('must not run') } }, undefined, aborted.signal)
+  assert.equal(interrupted.proposal?.patch?.verificationStatus, 'interrupted')
+
+  const changedAdapter = new FakeGitAdapter()
+  const changedManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: changedAdapter })
+  changedManager.registerSession(createSession())
+  const changedPending = await changedManager.prepare(request())
+  const changedConfirmed = await changedManager.confirm(changedPending.proposal?.proposalId ?? '', changedPending.proposal?.confirmationDigest ?? '')
+  const changedDraft = await changedManager.preparePatch({ proposalId: changedConfirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  const changedApplied = await changedManager.confirmPatch(changedDraft.proposal?.patch?.patchId ?? '', changedDraft.proposal?.patch?.confirmationDigest ?? '')
+  changedAdapter.changedPaths = ['src/index.ts', 'src/unexpected.ts']
+  let unexpectedRunnerCalls = 0
+  const unexpected = await changedManager.verifyPatch({
+    patchId: changedApplied.proposal?.patch?.patchId ?? '',
+    confirmationDigest: changedApplied.proposal?.patch?.confirmationDigest ?? '',
+    recipeId: 'test',
+  }, { run: async () => { unexpectedRunnerCalls += 1; throw new Error('must not run') } })
+  assert.equal(unexpected.operationStatus, 'patch-verification-blocked')
+  assert.equal(unexpectedRunnerCalls, 0)
 })
 
 test('patch validation accepts declared add/modify/delete files and rejects policy or budget violations', async () => {

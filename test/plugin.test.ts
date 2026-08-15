@@ -1,7 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { apply } from '../src/harness/plugin.ts'
+import { createChangeProposalVerificationRunner } from '../src/harness/change-proposal-verification.ts'
+import { createConfig } from '../src/config.ts'
 
 test('Harness adapter registers read-only analysis and session-only proposal tools', async () => {
   const registered: Array<{
@@ -18,13 +22,112 @@ test('Harness adapter registers read-only analysis and session-only proposal too
   assert.ok(analysis)
   assert.ok(proposal)
   assert.match(JSON.stringify(proposal.parameters), /prepare-patch/)
+  assert.match(JSON.stringify(proposal.parameters), /review-patch/)
+  assert.match(JSON.stringify(proposal.parameters), /export-patch/)
   assert.match(JSON.stringify(proposal.parameters), /confirm-patch/)
   assert.match(JSON.stringify(proposal.parameters), /reject-patch/)
+  assert.match(JSON.stringify(proposal.parameters), /verify-patch/)
   assert.deepEqual(analysis.output.schema, { type: 'object' })
   assert.match(analysis.output.render({}, { policy: 'readonly' })[0]?.text ?? '', /"policy": "readonly"/)
   const clarification = await analysis.execute({}) as { clarification?: { question?: { field?: string } } }
   assert.equal(clarification.clarification?.question?.field, 'intent')
   assert.ok(logs.some((message) => message.includes('read-only')))
+})
+
+test('patch verification runner reuses Harness approval and executes only at the owned worktree root', async () => {
+  const workspaceRoot = path.join(process.cwd(), 'test', 'fixtures', 'complete-repo')
+  const recipe = {
+    id: 'test',
+    command: 'npm',
+    args: ['test'],
+    sandboxMode: 'read-only' as const,
+    timeoutMs: 30_000,
+    maxOutputBytes: 32_000,
+    enabled: true,
+  }
+  const agent = { session: { header: { cwd: workspaceRoot } } }
+  const isolatedRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'repo-atlas-verify-'))
+  let approvalRequest: { toolName: string; callId?: string; reason?: string } | undefined
+  let resolvedRoot = ''
+  let spawnCount = 0
+  const services: Record<string, unknown> = {
+    goals: { get: () => ({ phase: 'active', activation: 'armed' }) },
+    approval: {
+      request: async (request: { toolName: string; callId?: string; reason?: string }) => {
+        approvalRequest = request
+        return 'allowed-once'
+      },
+    },
+    sandboxPolicy: {
+      resolve: ({ mode, workspaceRoot: requestedRoot }: { mode: 'read-only' | 'workspace-write'; workspaceRoot?: string }) => {
+        resolvedRoot = requestedRoot ?? ''
+        return { mode, workspaceRoot: requestedRoot ?? '' }
+      },
+    },
+    sandbox: { confine: (argv: readonly string[]) => ({ argv: [...argv], enforcement: 'full', denialSignatures: [], runnerFailureRules: [] }) },
+    subprocess: {
+      spawn: (request: { cwd: string }) => {
+        spawnCount += 1
+        assert.equal(request.cwd, isolatedRoot)
+        return {
+          collected: { stdout: { readFrom: () => ({ text: 'verified', nextOffset: 8, lossy: false }) } },
+          done: Promise.resolve({ exitCode: 0, signal: null }),
+          terminate() {},
+        }
+      },
+    },
+  }
+  const runner = createChangeProposalVerificationRunner(createConfig(workspaceRoot, { controlledActions: { enabled: true, recipes: [recipe] } }), {
+    get: <T>(name: string) => services[name] as T | undefined,
+    tools: { register: () => undefined },
+  })
+  const result = await runner.run({
+    recipeId: 'test',
+    worktree: { path: isolatedRoot, identity: 'owned-worktree', baseRevision: 'head' },
+    execution: { callId: 'verify-call', agent },
+    signal: new AbortController().signal,
+  })
+  assert.equal(result.status, 'passed')
+  assert.equal(result.stdout, 'verified')
+  assert.equal(resolvedRoot, isolatedRoot)
+  assert.equal(spawnCount, 1)
+  assert.equal(approvalRequest?.toolName, 'repo_atlas_change_proposal')
+  assert.equal(approvalRequest?.callId, 'verify-call')
+  await fs.rm(isolatedRoot, { recursive: true, force: true })
+})
+
+test('patch verification runner rejects writable recipes before approval or subprocess start', async () => {
+  const workspaceRoot = path.join(process.cwd(), 'test', 'fixtures', 'complete-repo')
+  const isolatedRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'repo-atlas-verify-'))
+  let approvalCount = 0
+  let spawnCount = 0
+  const runner = createChangeProposalVerificationRunner(createConfig(workspaceRoot, {
+    controlledActions: {
+      enabled: true,
+      recipes: [{ id: 'write', command: 'npm', args: ['test'], sandboxMode: 'workspace-write', timeoutMs: 30_000, maxOutputBytes: 1_024, enabled: true }],
+    },
+  }), {
+    get: <T>(name: string) => {
+      if (name === 'goals') return { get: () => ({ phase: 'active', activation: 'armed' }) } as T
+      if (name === 'approval') return { request: async () => { approvalCount += 1; return 'allowed-once' } } as T
+      if (name === 'sandboxPolicy') return { resolve: () => ({ mode: 'read-only', workspaceRoot: isolatedRoot }) } as T
+      if (name === 'sandbox') return { confine: (argv: readonly string[]) => ({ argv: [...argv], enforcement: 'full', denialSignatures: [], runnerFailureRules: [] }) } as T
+      if (name === 'subprocess') return { spawn: () => { spawnCount += 1; throw new Error('must not spawn') } } as T
+      return undefined
+    },
+    tools: { register: () => undefined },
+  })
+  const result = await runner.run({
+    recipeId: 'write',
+    worktree: { path: isolatedRoot, identity: 'owned-worktree', baseRevision: 'head' },
+    execution: { callId: 'verify-write', agent: { session: { header: { cwd: workspaceRoot } } } },
+    signal: new AbortController().signal,
+  })
+  assert.equal(result.status, 'denied')
+  assert.match(result.reason, /read-only/)
+  assert.equal(approvalCount, 0)
+  assert.equal(spawnCount, 0)
+  await fs.rm(isolatedRoot, { recursive: true, force: true })
 })
 
 test('registered tool keeps the clarification gate and produces a report after direct start', async () => {

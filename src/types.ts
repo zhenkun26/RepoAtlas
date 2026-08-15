@@ -275,6 +275,10 @@ export type ChangeProposalOperationStatus =
   | 'worktree-created'
   | 'patch-awaiting-confirmation'
   | 'patch-applied'
+  | 'patch-verification-passed'
+  | 'patch-verification-failed'
+  | 'patch-verification-blocked'
+  | 'patch-verification-interrupted'
   | 'patch-rejected'
   | 'patch-not-applied'
   | 'commit-not-created'
@@ -300,6 +304,12 @@ export interface ChangeProposalPatchRequest {
   patchText: string
 }
 
+export interface ChangeProposalVerifyPatchRequest {
+  patchId: string
+  confirmationDigest: string
+  recipeId: string
+}
+
 export interface ChangeProposalTarget {
   relativePath: string
   operation: ChangeProposalOperation
@@ -318,6 +328,8 @@ export type ChangeProposalPatchStatus = 'not-prepared' | 'awaiting-confirmation'
 
 export type ChangeProposalPatchExecutionStatus = 'patch-not-applied' | 'patch-applied' | 'patch-application-unknown'
 
+export type ChangeProposalVerificationStatus = 'not-run' | 'passed' | 'failed' | 'blocked' | 'interrupted' | 'denied' | 'sandbox-unavailable' | 'timed-out' | 'cancelled'
+
 export interface ChangeProposalPatchFileSummary {
   relativePath: string
   operation: ChangeProposalOperation
@@ -333,6 +345,33 @@ export interface ChangeProposalPatchSummary {
   changedLines: number
 }
 
+export interface ChangeProposalVerification {
+  verificationId: string
+  auditId: string
+  recipeId: string
+  status: Exclude<ChangeProposalVerificationStatus, 'not-run'>
+  reason: string
+  worktreeIdentity: string
+  stdout: string
+  stderr: string
+  outputTruncated: boolean
+  redacted: boolean
+  redactedMatchCount: number
+  exitCode?: number | null
+  signal?: string | null
+  createdAt: string
+}
+
+export interface ChangeProposalPatchExport {
+  patchId: string
+  proposalId: string
+  confirmationDigest: string
+  patchText: string
+  summary: ChangeProposalPatchSummary
+  sessionOnly: true
+  exportedAt: string
+}
+
 export interface ChangeProposalPatch {
   patchId: string
   confirmationDigest: string
@@ -342,6 +381,8 @@ export interface ChangeProposalPatch {
   createdAt: string
   expiresAt: string
   executionStatus: ChangeProposalPatchExecutionStatus
+  verificationStatus: ChangeProposalVerificationStatus
+  verification?: ChangeProposalVerification
 }
 
 export interface ChangeProposalExecutionStatus {
@@ -379,4 +420,6 @@ export interface ChangeProposalResult {
   operationStatus: ChangeProposalOperationStatus
   reason: string
   proposal?: ChangeProposal
+  patchExport?: ChangeProposalPatchExport
+  verification?: ChangeProposalVerification
 }
