@@ -32,6 +32,16 @@ Git adapter 只执行固定的本地 path-limited staging 和 commit：`shell:fa
 
 成功 commit 后必须证明 returned HEAD revision、stable worktree identity 和 clean worktree；否则返回 `commit-creation-unknown`，保留 worktree，不执行 reset、unstage、`git clean`、逆补丁或 force remove。成功结果仍明确标记 `push-not-performed`，既有 safe release 只允许释放干净且 identity 匹配的 session-owned worktree。
 
+## v2.4 source workspace landing
+
+v2.4 将 source landing 与 isolated commit 分成独立 draft。只有当前 session 中 `commit-created` 且 revision 已知的 detached-worktree commit 才能 prepare landing；source workspace 必须 clean、repository root 匹配，且 HEAD 仍等于 proposal 的 base revision。prepare 不修改 source、index、isolated worktree 或 remote。
+
+confirm 必须提供 landing exact digest，并通过 Harness active+armed Goal 和一次性 `allowed-once` approval。工具不接受 source path、commit revision、merge strategy 或命令输入；这些值只从当前 session proposal/commit 记录派生。
+
+adapter 只执行固定本地 `git merge --ff-only --no-verify --no-edit <recorded commit revision>`，不解决冲突、不创建 merge commit、不创建 branch、不访问 remote、不 push。source revision drift、dirty/staged/untracked changes 或 non-fast-forward 都 fail closed。
+
+成功 landing 必须证明 source HEAD 等于 target commit revision、source clean 且 repository/path 未变化。中止、超时、Git 结果或 postcondition 不确定时返回 `landing-creation-unknown`，保留 source/worktree，不执行 reset、revert、clean、逆补丁或 force remove；成功后仍标记 `push-not-performed`。
+
 ## 路径与文件
 
 - workspace 根目录先规范化；包含 `..` 的请求直接拒绝。
@@ -56,4 +66,4 @@ AST 只处理已确认 scope 内的 `.ts`、`.tsx`、`.js`、`.jsx` 脱敏文本
 
 ## 回滚
 
-RepoAtlas 是无迁移的插件。停用 Harness profile 或移除本项目目录即可回滚，不需要恢复数据库或远程配置。v2.3 的 session-only patch/export/verification/commit registry 随进程结束丢弃；isolated commit 只存在于 session-owned detached worktree，source workspace 和 remote 不会被工具回写。孤儿 worktree 仍按人工检查和清理路径处理，工具不会跨 session 自动接管或删除。
+RepoAtlas 是无迁移的插件。停用 Harness profile 或移除本项目目录即可回滚，不需要恢复数据库或远程配置。v2.4 的 session-only patch/export/verification/commit/landing registry 随进程结束丢弃；source landing 只执行显式确认的 local fast-forward，remote 不会被工具访问或更新。孤儿 worktree 或 landing uncertainty 仍按人工检查和恢复路径处理，工具不会跨 session 自动接管、reset 或删除。

@@ -6,6 +6,7 @@ import path from 'node:path'
 import { apply } from '../src/harness/plugin.ts'
 import { createChangeProposalVerificationRunner } from '../src/harness/change-proposal-verification.ts'
 import { createChangeProposalCommitAuthorizer } from '../src/harness/change-proposal-commit.ts'
+import { createChangeProposalLandingAuthorizer } from '../src/harness/change-proposal-landing.ts'
 import { createConfig } from '../src/config.ts'
 
 test('Harness adapter registers read-only analysis and session-only proposal tools', async () => {
@@ -31,6 +32,9 @@ test('Harness adapter registers read-only analysis and session-only proposal too
   assert.match(JSON.stringify(proposal.parameters), /prepare-commit/)
   assert.match(JSON.stringify(proposal.parameters), /confirm-commit/)
   assert.match(JSON.stringify(proposal.parameters), /reject-commit/)
+  assert.match(JSON.stringify(proposal.parameters), /prepare-landing/)
+  assert.match(JSON.stringify(proposal.parameters), /confirm-landing/)
+  assert.match(JSON.stringify(proposal.parameters), /reject-landing/)
   assert.deepEqual(analysis.output.schema, { type: 'object' })
   assert.match(analysis.output.render({}, { policy: 'readonly' })[0]?.text ?? '', /"policy": "readonly"/)
   const clarification = await analysis.execute({}) as { clarification?: { question?: { field?: string } } }
@@ -66,6 +70,36 @@ test('commit authorizer requires an active armed Goal and one-time Harness appro
   assert.equal(approvalRequest?.toolName, 'repo_atlas_change_proposal')
   assert.equal(approvalRequest?.callId, 'commit-call')
   assert.match(approvalRequest?.reason ?? '', /isolated commit/)
+})
+
+test('source landing authorizer requires an active armed Goal and one-time Harness approval', async () => {
+  const workspaceRoot = path.join(process.cwd(), 'test', 'fixtures', 'complete-repo')
+  let approvalRequest: { toolName: string; callId?: string; reason?: string } | undefined
+  const authorizer = createChangeProposalLandingAuthorizer({
+    get: <T>(name: string) => {
+      if (name === 'goals') return { get: () => ({ phase: 'active', activation: 'armed' }) } as T
+      if (name === 'approval') return {
+        request: async (request: { toolName: string; callId?: string; reason?: string }) => {
+          approvalRequest = request
+          return 'allowed-once'
+        },
+      } as T
+      return undefined
+    },
+    tools: { register: () => undefined },
+  })
+  const result = await authorizer.authorize({
+    landingId: 'landing-test',
+    confirmationDigest: 'digest',
+    sourcePath: workspaceRoot,
+    commitRevision: 'a'.repeat(40),
+    execution: { callId: 'landing-call', agent: { session: { header: { cwd: workspaceRoot } } } },
+  })
+  assert.equal(result.allowed, true)
+  assert.match(result.auditId ?? '', /^landing-approval-/)
+  assert.equal(approvalRequest?.toolName, 'repo_atlas_change_proposal')
+  assert.equal(approvalRequest?.callId, 'landing-call')
+  assert.match(approvalRequest?.reason ?? '', /source landing/)
 })
 
 test('patch verification runner reuses Harness approval and executes only at the owned worktree root', async () => {

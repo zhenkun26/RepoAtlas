@@ -18,12 +18,17 @@ class FakeGitAdapter implements GitWorktreeAdapter {
   removeCount = 0
   applyPatchCount = 0
   commitCount = 0
-  commitRevision = 'commit-1'
+  landCount = 0
+  commitRevision = 'a'.repeat(40)
+  sourceRevision = 'base-1'
+  sourceDirty = false
   dirty = false
   changedPaths: string[] = []
   failDiscovery = false
   failPatch = false
   failCommit = false
+  failLanding = false
+  failLandingPostcondition = false
   failCommitPostcondition = false
   failPostcondition = false
   identityMismatch = false
@@ -43,6 +48,11 @@ class FakeGitAdapter implements GitWorktreeAdapter {
     return { ...worktree, baseRevision: this.commitCount > 0 ? this.commitRevision : worktree.baseRevision, identity: this.identityMismatch ? 'identity-mismatch' : worktree.identity, dirty: this.dirty, changedPaths: [...this.changedPaths] }
   }
 
+  async inspectSource(repositoryRoot: string, sourceWorkspaceRoot: string): Promise<{ path: string; repositoryRoot: string; revision: string; dirty: boolean }> {
+    if (this.failLandingPostcondition && this.landCount > 0) throw new Error('source postcondition inspection unavailable')
+    return { path: sourceWorkspaceRoot, repositoryRoot, revision: this.sourceRevision, dirty: this.sourceDirty }
+  }
+
   async applyPatch(): Promise<void> {
     this.applyPatchCount += 1
     if (this.failPatch) throw new Error('patch rejected by fake Git')
@@ -56,6 +66,13 @@ class FakeGitAdapter implements GitWorktreeAdapter {
     this.dirty = false
     this.changedPaths = []
     return this.commitRevision
+  }
+
+  async land(_repositoryRoot: string, _sourceWorkspaceRoot: string, _expectedSourceRevision: string, commitRevision: string): Promise<string> {
+    this.landCount += 1
+    if (this.failLanding) throw new Error('landing rejected by fake Git')
+    this.sourceRevision = commitRevision
+    return this.sourceRevision
   }
 
   async remove(): Promise<void> {
@@ -126,6 +143,36 @@ async function prepareVerifiedCommitDraft(manager: ChangeProposalManager, runner
   return manager.prepareCommit({ proposalId: verified.proposal?.proposalId ?? '', commitMessage: `feat: ${recipeId}` })
 }
 
+async function prepareCreatedCommit(manager: ChangeProposalManager, runner: ChangeProposalVerificationRunner, recipeId: string): Promise<ChangeProposalResult> {
+  const draft = await prepareVerifiedCommitDraft(manager, runner, recipeId)
+  return manager.confirmCommit(draft.proposal?.commit?.commitId ?? '', draft.proposal?.commit?.confirmationDigest ?? '', {
+    authorize: async () => ({ allowed: true, auditId: `approval-${recipeId}`, reason: 'approved' }),
+  })
+}
+
+function passedVerificationRunner(): ChangeProposalVerificationRunner {
+  return {
+    async run({ recipeId, worktree }): Promise<ChangeProposalVerification> {
+      return {
+        verificationId: `verification-${recipeId}`,
+        auditId: `audit-${recipeId}`,
+        recipeId,
+        status: 'passed',
+        reason: 'verification passed',
+        worktreeIdentity: worktree.identity,
+        stdout: 'ok',
+        stderr: '',
+        outputTruncated: false,
+        redacted: false,
+        redactedMatchCount: 0,
+        exitCode: 0,
+        signal: null,
+        createdAt: new Date().toISOString(),
+      }
+    },
+  }
+}
+
 test('proposal lifecycle requires exact confirmation and releases a clean owned worktree', async () => {
   const adapter = new FakeGitAdapter()
   const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
@@ -150,6 +197,7 @@ test('proposal lifecycle requires exact confirmation and releases a clean owned 
   assert.deepEqual(confirmed.proposal?.executionStatus, {
     patch: 'patch-not-applied',
     commit: 'commit-not-created',
+    landing: 'landing-not-performed',
     push: 'push-not-performed',
   })
   assert.equal(adapter.createCount, 1)
@@ -426,7 +474,7 @@ test('isolated commit lifecycle requires passed verification, exact digest, appr
   assert.equal(created.proposal?.commit?.status, 'created')
   assert.equal(created.proposal?.commit?.executionStatus, 'commit-created')
   assert.equal(created.proposal?.commit?.approvalAuditId, 'commit-approval-1')
-  assert.equal(created.proposal?.commit?.revision, 'commit-1')
+  assert.equal(created.proposal?.commit?.revision, adapter.commitRevision)
   assert.equal(created.proposal?.commitCreated, true)
   assert.equal(created.proposal?.executionStatus.commit, 'commit-created')
   assert.equal(created.proposal?.executionStatus.push, 'push-not-performed')
@@ -568,6 +616,113 @@ test('isolated commit blocks unverified, rejected, expired, failed, and uncertai
   assert.equal(uncertain.proposal?.commit?.status, 'blocked')
   assert.equal(uncertain.proposal?.commit?.executionStatus, 'commit-creation-unknown')
   assert.equal(uncertainAdapter.removeCount, 0)
+})
+
+test('source landing requires exact base and approval, then fast-forwards once', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+  const created = await prepareCreatedCommit(manager, passedVerificationRunner(), 'landing-happy')
+  const draft = await manager.prepareLanding({ proposalId: created.proposal?.proposalId ?? '' })
+  assert.equal(draft.status, 'confirmed')
+  assert.equal(draft.operationStatus, 'landing-awaiting-confirmation')
+  assert.equal(draft.proposal?.landing?.status, 'awaiting-confirmation')
+  assert.equal(draft.proposal?.sourceLanded, false)
+  assert.equal(adapter.landCount, 0)
+
+  const mismatch = await manager.confirmLanding(draft.proposal?.landing?.landingId ?? '', '0'.repeat(64), { authorize: async () => ({ allowed: true, auditId: 'must-not-use', reason: 'must not use' }) })
+  assert.equal(mismatch.proposal?.landing?.status, 'awaiting-confirmation')
+  assert.equal(adapter.landCount, 0)
+
+  const denied = await manager.confirmLanding(draft.proposal?.landing?.landingId ?? '', draft.proposal?.landing?.confirmationDigest ?? '', { authorize: async () => ({ allowed: false, reason: 'user rejected' }) })
+  assert.equal(denied.proposal?.landing?.status, 'awaiting-confirmation')
+  assert.equal(adapter.landCount, 0)
+
+  const landed = await manager.confirmLanding(draft.proposal?.landing?.landingId ?? '', draft.proposal?.landing?.confirmationDigest ?? '', { authorize: async () => ({ allowed: true, auditId: 'landing-approval-1', reason: 'approved' }) })
+  assert.equal(landed.status, 'confirmed')
+  assert.equal(landed.operationStatus, 'landing-completed')
+  assert.equal(landed.proposal?.landing?.status, 'landed')
+  assert.equal(landed.proposal?.landing?.executionStatus, 'landing-completed')
+  assert.equal(landed.proposal?.landing?.landedRevision, adapter.commitRevision)
+  assert.equal(landed.proposal?.landing?.approvalAuditId, 'landing-approval-1')
+  assert.equal(landed.proposal?.sourceLanded, true)
+  assert.equal(landed.proposal?.executionStatus.landing, 'landing-completed')
+  assert.equal(landed.proposal?.executionStatus.push, 'push-not-performed')
+  assert.equal(adapter.landCount, 1)
+
+  const replay = await manager.confirmLanding(draft.proposal?.landing?.landingId ?? '', draft.proposal?.landing?.confirmationDigest ?? '', { authorize: async () => ({ allowed: true, auditId: 'must-not-use', reason: 'must not use' }) })
+  assert.equal(replay.proposal?.landing?.status, 'landed')
+  assert.equal(adapter.landCount, 1)
+  assert.equal((await manager.release(draft.proposal?.proposalId ?? '')).status, 'released')
+})
+
+test('source landing fails closed for source drift, abort, expiry, Git failure, and unknown postcondition', async () => {
+  const driftAdapter = new FakeGitAdapter()
+  driftAdapter.sourceDirty = true
+  const driftManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: driftAdapter })
+  driftManager.registerSession(createSession())
+  const driftCreated = await prepareCreatedCommit(driftManager, passedVerificationRunner(), 'landing-dirty')
+  const dirty = await driftManager.prepareLanding({ proposalId: driftCreated.proposal?.proposalId ?? '' })
+  assert.equal(dirty.proposal?.landing, undefined)
+  assert.match(dirty.reason, /clean source/)
+  assert.equal(driftAdapter.landCount, 0)
+
+  const baseAdapter = new FakeGitAdapter()
+  const baseManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: baseAdapter })
+  baseManager.registerSession(createSession())
+  const baseCreated = await prepareCreatedCommit(baseManager, passedVerificationRunner(), 'landing-drift')
+  const baseDraft = await baseManager.prepareLanding({ proposalId: baseCreated.proposal?.proposalId ?? '' })
+  baseAdapter.sourceRevision = 'different-base'
+  const baseBlocked = await baseManager.confirmLanding(baseDraft.proposal?.landing?.landingId ?? '', baseDraft.proposal?.landing?.confirmationDigest ?? '', { authorize: async () => ({ allowed: true, auditId: 'must-not-use', reason: 'must not use' }) })
+  assert.equal(baseBlocked.proposal?.landing?.status, 'blocked')
+  assert.equal(baseBlocked.proposal?.landing?.executionStatus, 'landing-not-performed')
+  assert.equal(baseAdapter.landCount, 0)
+
+  const abortedAdapter = new FakeGitAdapter()
+  const abortedManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: abortedAdapter })
+  abortedManager.registerSession(createSession())
+  const abortedCreated = await prepareCreatedCommit(abortedManager, passedVerificationRunner(), 'landing-abort')
+  const abortedDraft = await abortedManager.prepareLanding({ proposalId: abortedCreated.proposal?.proposalId ?? '' })
+  const controller = new AbortController()
+  controller.abort()
+  const interrupted = await abortedManager.confirmLanding(abortedDraft.proposal?.landing?.landingId ?? '', abortedDraft.proposal?.landing?.confirmationDigest ?? '', { authorize: async () => ({ allowed: true, auditId: 'must-not-use', reason: 'must not use' }) }, undefined, controller.signal)
+  assert.equal(interrupted.proposal?.landing?.status, 'interrupted')
+  assert.equal(interrupted.proposal?.landing?.executionStatus, 'landing-not-performed')
+  assert.equal(abortedAdapter.landCount, 0)
+
+  const expiringAdapter = new FakeGitAdapter()
+  const expiringManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: expiringAdapter, limits: { expirationMs: 25 } })
+  expiringManager.registerSession(createSession())
+  const expiringCreated = await prepareCreatedCommit(expiringManager, passedVerificationRunner(), 'landing-expired')
+  const expiringDraft = await expiringManager.prepareLanding({ proposalId: expiringCreated.proposal?.proposalId ?? '' })
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  const expired = await expiringManager.confirmLanding(expiringDraft.proposal?.landing?.landingId ?? '', expiringDraft.proposal?.landing?.confirmationDigest ?? '', { authorize: async () => ({ allowed: true, auditId: 'must-not-use', reason: 'must not use' }) })
+  assert.equal(expired.proposal?.landing?.status, 'blocked')
+  assert.equal(expired.proposal?.landing?.executionStatus, 'landing-not-performed')
+  assert.equal(expiringAdapter.landCount, 0)
+
+  const failedAdapter = new FakeGitAdapter()
+  failedAdapter.failLanding = true
+  const failedManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: failedAdapter })
+  failedManager.registerSession(createSession())
+  const failedCreated = await prepareCreatedCommit(failedManager, passedVerificationRunner(), 'landing-failed')
+  const failedDraft = await failedManager.prepareLanding({ proposalId: failedCreated.proposal?.proposalId ?? '' })
+  const failed = await failedManager.confirmLanding(failedDraft.proposal?.landing?.landingId ?? '', failedDraft.proposal?.landing?.confirmationDigest ?? '', { authorize: async () => ({ allowed: true, auditId: 'approval-failed', reason: 'approved' }) })
+  assert.equal(failed.proposal?.landing?.status, 'blocked')
+  assert.equal(failed.proposal?.landing?.executionStatus, 'landing-not-performed')
+  assert.equal(failedAdapter.landCount, 1)
+
+  const unknownAdapter = new FakeGitAdapter()
+  unknownAdapter.failLandingPostcondition = true
+  const unknownManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: unknownAdapter })
+  unknownManager.registerSession(createSession())
+  const unknownCreated = await prepareCreatedCommit(unknownManager, passedVerificationRunner(), 'landing-unknown')
+  const unknownDraft = await unknownManager.prepareLanding({ proposalId: unknownCreated.proposal?.proposalId ?? '' })
+  const unknown = await unknownManager.confirmLanding(unknownDraft.proposal?.landing?.landingId ?? '', unknownDraft.proposal?.landing?.confirmationDigest ?? '', { authorize: async () => ({ allowed: true, auditId: 'approval-unknown', reason: 'approved' }) })
+  assert.equal(unknown.proposal?.landing?.status, 'blocked')
+  assert.equal(unknown.proposal?.landing?.executionStatus, 'landing-creation-unknown')
+  assert.equal(unknown.proposal?.sourceLanded, false)
+  assert.equal(unknownAdapter.landCount, 1)
 })
 
 test('patch verification fails closed for missing runner, abort, and unexpected worktree changes', async () => {
@@ -777,6 +932,77 @@ test('node Git adapter creates and removes a detached worktree without network a
     assert.equal(committed.identity, worktree.identity)
     await adapter.remove(revision.repositoryRoot, worktree)
     await assert.rejects(() => fs.access(worktree.path))
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
+test('node Git adapter fast-forwards the clean source workspace from an isolated commit', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'repo-atlas-landing-'))
+  try {
+    await runGit(root, ['init', '-q'])
+    await runGit(root, ['config', 'user.email', 'repo-atlas@example.test'])
+    await runGit(root, ['config', 'user.name', 'RepoAtlas Test'])
+    await fs.writeFile(path.join(root, 'README.md'), 'fixture\n')
+    await runGit(root, ['add', 'README.md'])
+    await runGit(root, ['commit', '-qm', 'fixture'])
+
+    const adapter = createNodeGitWorktreeAdapter()
+    const revision = await adapter.discover(root)
+    const worktree = await adapter.create(revision.repositoryRoot, revision.baseRevision)
+    await adapter.applyPatch(revision.repositoryRoot, worktree, `diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1 +1 @@
+-fixture
++landed
+`, '')
+    const commitRevision = await adapter.commit(revision.repositoryRoot, worktree, ['README.md'], 'feat: land fixture change')
+    const sourceBefore = await adapter.inspectSource(revision.repositoryRoot, root)
+    assert.equal(sourceBefore.revision, revision.baseRevision)
+    assert.equal(sourceBefore.dirty, false)
+    const landedRevision = await adapter.land(revision.repositoryRoot, root, revision.baseRevision, commitRevision)
+    assert.equal(landedRevision, commitRevision)
+    assert.equal(await fs.readFile(path.join(root, 'README.md'), 'utf8'), 'landed\n')
+    const sourceAfter = await adapter.inspectSource(revision.repositoryRoot, root)
+    assert.equal(sourceAfter.revision, commitRevision)
+    assert.equal(sourceAfter.dirty, false)
+    const committed = await adapter.inspect(revision.repositoryRoot, worktree)
+    assert.equal(committed.dirty, false)
+    assert.equal(committed.identity, worktree.identity)
+    await adapter.remove(revision.repositoryRoot, worktree)
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
+test('node Git adapter refuses source revision drift without creating a merge', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'repo-atlas-landing-drift-'))
+  try {
+    await runGit(root, ['init', '-q'])
+    await runGit(root, ['config', 'user.email', 'repo-atlas@example.test'])
+    await runGit(root, ['config', 'user.name', 'RepoAtlas Test'])
+    await fs.writeFile(path.join(root, 'README.md'), 'fixture\n')
+    await runGit(root, ['add', 'README.md'])
+    await runGit(root, ['commit', '-qm', 'fixture'])
+
+    const adapter = createNodeGitWorktreeAdapter()
+    const revision = await adapter.discover(root)
+    const worktree = await adapter.create(revision.repositoryRoot, revision.baseRevision)
+    await adapter.applyPatch(revision.repositoryRoot, worktree, `diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1 +1 @@
+-fixture
++isolated
+`, '')
+    const commitRevision = await adapter.commit(revision.repositoryRoot, worktree, ['README.md'], 'feat: isolated divergent change')
+    await fs.writeFile(path.join(root, 'README.md'), 'source-diverged\n')
+    await runGit(root, ['add', 'README.md'])
+    await runGit(root, ['commit', '-qm', 'source diverged'])
+    await assert.rejects(() => adapter.land(revision.repositoryRoot, root, revision.baseRevision, commitRevision), /expected base revision/)
+    assert.equal(await fs.readFile(path.join(root, 'README.md'), 'utf8'), 'source-diverged\n')
+    await adapter.remove(revision.repositoryRoot, worktree)
   } finally {
     await fs.rm(root, { recursive: true, force: true })
   }

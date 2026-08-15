@@ -13,6 +13,9 @@ import type {
   ChangeProposalCommit,
   ChangeProposalCommitRequest,
   ChangeProposalCommitExecutionStatus,
+  ChangeProposalLanding,
+  ChangeProposalLandingRequest,
+  ChangeProposalLandingExecutionStatus,
   ChangeProposalPatch,
   ChangeProposalPatchFileSummary,
   ChangeProposalPatchRequest,
@@ -62,12 +65,21 @@ interface InspectedWorktree extends ChangeProposalWorktree {
   changedPaths: string[]
 }
 
+interface InspectedSourceWorktree {
+  path: string
+  repositoryRoot: string
+  revision: string
+  dirty: boolean
+}
+
 export interface GitWorktreeAdapter {
   discover(workspaceRoot: string, signal?: AbortSignal): Promise<RepositoryRevision>
   create(repositoryRoot: string, baseRevision: string, signal?: AbortSignal): Promise<ChangeProposalWorktree>
   inspect(repositoryRoot: string, worktree: ChangeProposalWorktree, signal?: AbortSignal): Promise<InspectedWorktree>
+  inspectSource(repositoryRoot: string, sourceWorkspaceRoot: string, signal?: AbortSignal): Promise<InspectedSourceWorktree>
   applyPatch(repositoryRoot: string, worktree: ChangeProposalWorktree, patchText: string, workspaceRelativeRoot: string, signal?: AbortSignal): Promise<void>
   commit(repositoryRoot: string, worktree: ChangeProposalWorktree, repositoryRelativePaths: readonly string[], commitMessage: string, signal?: AbortSignal): Promise<string>
+  land(repositoryRoot: string, sourceWorkspaceRoot: string, expectedSourceRevision: string, commitRevision: string, signal?: AbortSignal): Promise<string>
   remove(repositoryRoot: string, worktree: ChangeProposalWorktree, signal?: AbortSignal): Promise<void>
 }
 
@@ -104,6 +116,25 @@ export interface ChangeProposalCommitAuthorizer {
   }): Promise<ChangeProposalCommitApproval>
 }
 
+export interface ChangeProposalLandingExecution extends ChangeProposalVerificationExecution {}
+
+export interface ChangeProposalLandingApproval {
+  allowed: boolean
+  auditId?: string
+  reason: string
+}
+
+export interface ChangeProposalLandingAuthorizer {
+  authorize(request: {
+    landingId: string
+    confirmationDigest: string
+    sourcePath: string
+    commitRevision: string
+    execution?: ChangeProposalLandingExecution
+    signal?: AbortSignal
+  }): Promise<ChangeProposalLandingApproval>
+}
+
 interface StoredPatchDraft {
   proposalId: string
   patchText: string
@@ -113,6 +144,11 @@ interface StoredPatchDraft {
 interface StoredCommitDraft {
   proposalId: string
   commit: ChangeProposalCommit
+}
+
+interface StoredLandingDraft {
+  proposalId: string
+  landing: ChangeProposalLanding
 }
 
 interface ParsedPatch {
@@ -140,6 +176,16 @@ class CommitOperationError extends Error {
   }
 }
 
+class LandingOperationError extends Error {
+  readonly uncertain: boolean
+
+  constructor(message: string, uncertain: boolean) {
+    super(message)
+    this.name = 'LandingOperationError'
+    this.uncertain = uncertain
+  }
+}
+
 export interface ChangeProposalManagerOptions {
   adapter?: GitWorktreeAdapter
   limits?: Partial<ChangeProposalLimits>
@@ -150,6 +196,7 @@ export class ChangeProposalManager {
   private readonly proposals = new Map<string, ChangeProposal>()
   private readonly patches = new Map<string, StoredPatchDraft>()
   private readonly commits = new Map<string, StoredCommitDraft>()
+  private readonly landings = new Map<string, StoredLandingDraft>()
   private readonly config: RepoAtlasConfig
   private readonly adapter: GitWorktreeAdapter
   private readonly limits: ChangeProposalLimits
@@ -216,10 +263,12 @@ export class ChangeProposalManager {
       executionStatus: {
         patch: 'patch-not-applied',
         commit: 'commit-not-created',
+        landing: 'landing-not-performed',
         push: 'push-not-performed',
       },
       patchApplied: false,
       commitCreated: false,
+      sourceLanded: false,
       pushPerformed: false,
       createdAt: new Date().toISOString(),
     }
@@ -589,6 +638,135 @@ export class ChangeProposalManager {
     return resultForWithCommit(proposal, 'commit draft rejected; no Git commit was created', draft.commit)
   }
 
+  async prepareLanding(request: ChangeProposalLandingRequest, signal?: AbortSignal): Promise<ChangeProposalResult> {
+    if (signal?.aborted) return blockedResult('interrupted', 'source landing preparation was interrupted before validation')
+    const proposal = this.proposals.get(request.proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal is unknown to the current session')
+    if (proposal.landing) return resultForWithLanding(proposal, 'this proposal already has a source landing draft; terminal landing states are not replayable', proposal.landing)
+    if (proposal.status !== 'confirmed' || !proposal.worktree) return resultFor(proposal, 'source landing requires a confirmed proposal with a managed worktree')
+    if (!proposal.commit || proposal.commit.status !== 'created' || proposal.commit.executionStatus !== 'commit-created' || !proposal.commit.revision) {
+      return resultFor(proposal, 'source landing requires a created local commit with a known revision')
+    }
+    if (!isSafeGitRevision(proposal.commit.revision)) return resultFor(proposal, 'source landing target revision is not a safe Git revision')
+
+    let source: InspectedSourceWorktree
+    try {
+      source = await this.adapter.inspectSource(proposal.repositoryRoot, proposal.workspaceRoot, signal)
+    } catch (error) {
+      return resultFor(proposal, `source landing inspection failed: ${redactError(error)}`)
+    }
+    if (path.resolve(source.repositoryRoot) !== path.resolve(proposal.repositoryRoot)) return resultFor(proposal, 'source workspace repository root no longer matches the proposal')
+    if (source.dirty) return resultFor(proposal, 'source landing requires a clean source workspace')
+    if (source.revision !== proposal.baseRevision) return resultFor(proposal, 'source workspace HEAD no longer matches the proposal base revision')
+
+    const landing: ChangeProposalLanding = {
+      landingId: `landing-${randomUUID()}`,
+      confirmationDigest: '',
+      status: 'awaiting-confirmation',
+      sourcePath: source.path,
+      sourceRevision: proposal.baseRevision,
+      commitRevision: proposal.commit.revision,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + this.limits.expirationMs).toISOString(),
+      executionStatus: 'landing-not-performed',
+    }
+    landing.confirmationDigest = createLandingDigest(proposal, landing)
+    proposal.landing = landing
+    proposal.operationStatus = 'landing-awaiting-confirmation'
+    this.landings.set(landing.landingId, { proposalId: proposal.proposalId, landing })
+    return resultForWithLanding(proposal, 'source landing draft prepared; exact landing digest and host approval are required before source mutation', landing)
+  }
+
+  async confirmLanding(
+    landingId: string,
+    confirmationDigest: string,
+    authorizer: ChangeProposalLandingAuthorizer | undefined,
+    execution?: ChangeProposalLandingExecution,
+    signal?: AbortSignal,
+  ): Promise<ChangeProposalResult> {
+    const draft = this.landings.get(landingId)
+    if (!draft) return blockedResult('blocked', 'source landing draft is unknown to the current session')
+    const proposal = this.proposals.get(draft.proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal for this source landing draft is no longer available')
+    if (draft.landing.status !== 'awaiting-confirmation') return resultForWithLanding(proposal, 'source landing draft is no longer awaiting confirmation', draft.landing)
+    if (signal?.aborted) return updateLandingFailure(proposal, draft.landing, 'interrupted', 'source landing confirmation was interrupted before approval', 'landing-not-performed')
+    if (Date.now() >= Date.parse(draft.landing.expiresAt)) return updateLandingFailure(proposal, draft.landing, 'blocked', 'source landing confirmation window has expired', 'landing-not-performed')
+    if (!sameDigest(draft.landing.confirmationDigest, confirmationDigest)) return resultForWithLanding(proposal, 'source landing confirmation digest does not match the pending draft', draft.landing)
+    if (proposal.status !== 'confirmed' || !proposal.worktree || !proposal.commit || proposal.commit.status !== 'created' || proposal.commit.executionStatus !== 'commit-created' || proposal.commit.revision !== draft.landing.commitRevision) {
+      return updateLandingFailure(proposal, draft.landing, 'blocked', 'source landing requires the unchanged confirmed proposal and created commit', 'landing-not-performed')
+    }
+
+    let source: InspectedSourceWorktree
+    try {
+      source = await this.adapter.inspectSource(proposal.repositoryRoot, proposal.workspaceRoot, signal)
+    } catch (error) {
+      return updateLandingFailure(proposal, draft.landing, 'blocked', `live source landing inspection failed: ${redactError(error)}`, 'landing-not-performed')
+    }
+    if (path.resolve(source.repositoryRoot) !== path.resolve(proposal.repositoryRoot) || path.resolve(source.path) !== path.resolve(draft.landing.sourcePath) || source.revision !== draft.landing.sourceRevision || source.dirty) {
+      return updateLandingFailure(proposal, draft.landing, 'blocked', 'source landing preconditions no longer match the clean exact-base source workspace', 'landing-not-performed')
+    }
+    if (!authorizer) return updateLandingFailure(proposal, draft.landing, 'blocked', 'source landing approval capability is unavailable', 'landing-not-performed')
+
+    let approval: ChangeProposalLandingApproval
+    try {
+      approval = await authorizer.authorize({
+        landingId: draft.landing.landingId,
+        confirmationDigest: draft.landing.confirmationDigest,
+        sourcePath: draft.landing.sourcePath,
+        commitRevision: draft.landing.commitRevision,
+        execution,
+        signal,
+      })
+    } catch (error) {
+      return resultForWithLanding(proposal, `source landing approval failed closed: ${redactError(error)}`, draft.landing)
+    }
+    if (!approval.allowed) return resultForWithLanding(proposal, approval.reason || 'source landing approval was rejected; the draft remains awaiting confirmation', draft.landing)
+    if (!approval.auditId) return updateLandingFailure(proposal, draft.landing, 'blocked', 'source landing approval did not provide an audit id', 'landing-not-performed')
+    draft.landing.approvalAuditId = boundedRedactedText(approval.auditId, this.limits.maxTextBytes)
+
+    let landedRevision: string
+    try {
+      landedRevision = await this.adapter.land(proposal.repositoryRoot, proposal.workspaceRoot, draft.landing.sourceRevision, draft.landing.commitRevision, signal)
+    } catch (error) {
+      const uncertain = error instanceof LandingOperationError && error.uncertain
+      return updateLandingFailure(
+        proposal,
+        draft.landing,
+        signal?.aborted ? 'interrupted' : 'blocked',
+        `source fast-forward landing failed${uncertain ? '; landing result is unknown and source/worktree were retained' : ''}: ${redactError(error)}`,
+        uncertain ? 'landing-creation-unknown' : 'landing-not-performed',
+      )
+    }
+
+    let after: InspectedSourceWorktree
+    try {
+      after = await this.adapter.inspectSource(proposal.repositoryRoot, proposal.workspaceRoot, signal)
+    } catch (error) {
+      return updateLandingFailure(proposal, draft.landing, signal?.aborted ? 'interrupted' : 'blocked', `source landing postcondition inspection failed; result is unknown and source/worktree were retained: ${redactError(error)}`, 'landing-creation-unknown')
+    }
+    if (path.resolve(after.repositoryRoot) !== path.resolve(proposal.repositoryRoot) || path.resolve(after.path) !== path.resolve(draft.landing.sourcePath) || after.revision !== draft.landing.commitRevision || landedRevision !== draft.landing.commitRevision || after.dirty) {
+      return updateLandingFailure(proposal, draft.landing, signal?.aborted ? 'interrupted' : 'blocked', 'source landing postcondition did not prove the target revision and clean source workspace; result is unknown and source/worktree were retained', 'landing-creation-unknown')
+    }
+    draft.landing.status = 'landed'
+    draft.landing.executionStatus = 'landing-completed'
+    draft.landing.landedRevision = landedRevision
+    proposal.executionStatus.landing = 'landing-completed'
+    proposal.operationStatus = 'landing-completed'
+    proposal.sourceLanded = true
+    return resultForWithLanding(proposal, 'source workspace fast-forward landed the isolated commit; remote and push were not performed', draft.landing)
+  }
+
+  rejectLanding(landingId: string): ChangeProposalResult {
+    const draft = this.landings.get(landingId)
+    if (!draft) return blockedResult('blocked', 'source landing draft is unknown to the current session')
+    const proposal = this.proposals.get(draft.proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal for this source landing draft is no longer available')
+    if (draft.landing.status !== 'awaiting-confirmation') return resultForWithLanding(proposal, 'source landing draft is no longer awaiting confirmation', draft.landing)
+    draft.landing.status = 'rejected'
+    proposal.operationStatus = 'landing-rejected'
+    return resultForWithLanding(proposal, 'source landing draft rejected; source workspace was not modified', draft.landing)
+  }
+
   reject(proposalId: string): ChangeProposalResult {
     const proposal = this.proposals.get(proposalId)
     if (!proposal) return blockedResult('blocked', 'proposal is unknown to the current session')
@@ -660,6 +838,14 @@ export function createNodeGitWorktreeAdapter(): GitWorktreeAdapter {
         changedPaths: uniquePaths([...trackedChanges.split('\n'), ...stagedChanges.split('\n'), ...untrackedChanges.split('\n')]),
       }
     },
+    async inspectSource(repositoryRoot, sourceWorkspaceRoot, signal) {
+      const canonicalWorkspace = await fs.realpath(path.resolve(sourceWorkspaceRoot))
+      const discoveredRoot = path.resolve(await runGit(['-C', canonicalWorkspace, 'rev-parse', '--show-toplevel'], canonicalWorkspace, signal))
+      if (path.resolve(repositoryRoot) !== discoveredRoot) throw new Error('source workspace repository root does not match the proposal repository')
+      const revision = await runGit(['-C', canonicalWorkspace, 'rev-parse', '--verify', 'HEAD^{commit}'], canonicalWorkspace, signal)
+      const status = await runGit(['-C', canonicalWorkspace, 'status', '--porcelain', '--untracked-files=all'], canonicalWorkspace, signal)
+      return { path: canonicalWorkspace, repositoryRoot: discoveredRoot, revision, dirty: status.length > 0 }
+    },
     async applyPatch(_repositoryRoot, worktree, patchText, workspaceRelativeRoot, signal) {
       const patchCwd = path.resolve(worktree.path, workspaceRelativeRoot || '.')
       if (!isWithin(worktree.path, patchCwd)) throw new Error('patch working directory is outside the managed worktree')
@@ -687,6 +873,32 @@ export function createNodeGitWorktreeAdapter(): GitWorktreeAdapter {
         return await runGit(['-C', worktree.path, 'rev-parse', '--verify', 'HEAD^{commit}'], worktree.path, signal)
       } catch (error) {
         throw new CommitOperationError(`local commit result is unknown: ${redactError(error)}`, true)
+      }
+    },
+    async land(repositoryRoot, sourceWorkspaceRoot, expectedSourceRevision, commitRevision, signal) {
+      if (!isSafeGitRevision(expectedSourceRevision) || !isSafeGitRevision(commitRevision)) throw new LandingOperationError('source or target revision is not a safe Git revision', false)
+      let inspected: InspectedSourceWorktree
+      try {
+        inspected = await this.inspectSource(repositoryRoot, sourceWorkspaceRoot, signal)
+      } catch (error) {
+        throw new LandingOperationError(`source landing precondition inspection failed: ${redactError(error)}`, false)
+      }
+      if (inspected.revision !== expectedSourceRevision || inspected.dirty) throw new LandingOperationError('source workspace is not clean at the expected base revision', false)
+      try {
+        const resolvedTarget = await runGit(['-C', inspected.path, 'rev-parse', '--verify', `${commitRevision}^{commit}`], inspected.path, signal)
+        if (resolvedTarget !== commitRevision) throw new Error('target commit revision could not be resolved exactly')
+      } catch (error) {
+        throw new LandingOperationError(`target commit is not locally resolvable: ${redactError(error)}`, false)
+      }
+      try {
+        await runGit(['-C', inspected.path, 'merge', '--ff-only', '--no-verify', '--no-edit', commitRevision], inspected.path, signal)
+      } catch (error) {
+        throw new LandingOperationError(`source fast-forward landing failed: ${redactError(error)}`, isUncertainGitFailure(error, signal))
+      }
+      try {
+        return await runGit(['-C', inspected.path, 'rev-parse', '--verify', 'HEAD^{commit}'], inspected.path, signal)
+      } catch (error) {
+        throw new LandingOperationError(`source landing result is unknown: ${redactError(error)}`, true)
       }
     },
     async remove(repositoryRoot, worktree, signal) {
@@ -771,6 +983,17 @@ function sameDigest(expected: string, received: string): boolean {
   const left = Buffer.from(expected, 'hex')
   const right = Buffer.from(received, 'hex')
   return left.length === right.length && timingSafeEqual(left, right)
+}
+
+function isSafeGitRevision(value: string): boolean {
+  return /^[a-f0-9]{40,64}$/.test(value)
+}
+
+function isUncertainGitFailure(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true
+  if (!error || typeof error !== 'object') return true
+  const candidate = error as { code?: unknown; killed?: unknown; signal?: unknown; name?: unknown }
+  return candidate.name === 'AbortError' || candidate.code === 'ETIMEDOUT' || candidate.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || candidate.killed === true || typeof candidate.signal === 'string'
 }
 
 function worktreeIdentity(worktreePath: string): string {
@@ -998,6 +1221,19 @@ function createCommitDigest(proposal: ChangeProposal, commit: ChangeProposalComm
   return createHash('sha256').update(payload).digest('hex')
 }
 
+function createLandingDigest(proposal: ChangeProposal, landing: ChangeProposalLanding): string {
+  const payload = JSON.stringify({
+    landingId: landing.landingId,
+    proposalId: proposal.proposalId,
+    commitId: proposal.commit?.commitId,
+    commitDigest: proposal.commit?.confirmationDigest,
+    commitRevision: landing.commitRevision,
+    sourcePath: path.resolve(landing.sourcePath),
+    sourceRevision: landing.sourceRevision,
+  })
+  return createHash('sha256').update(payload).digest('hex')
+}
+
 function updatePatchFailure(
   proposal: ChangeProposal,
   patch: ChangeProposalPatch,
@@ -1026,6 +1262,20 @@ function updateCommitFailure(
   return resultForWithCommit(proposal, reason, commit)
 }
 
+function updateLandingFailure(
+  proposal: ChangeProposal,
+  landing: ChangeProposalLanding,
+  status: 'blocked' | 'interrupted',
+  reason: string,
+  executionStatus: ChangeProposalLandingExecutionStatus,
+): ChangeProposalResult {
+  landing.status = status
+  landing.executionStatus = executionStatus
+  proposal.executionStatus.landing = executionStatus
+  proposal.operationStatus = status === 'interrupted' ? 'landing-interrupted' : executionStatus === 'landing-creation-unknown' ? 'landing-creation-unknown' : 'landing-blocked'
+  return resultForWithLanding(proposal, reason, landing)
+}
+
 function recordVerification(
   proposal: ChangeProposal,
   patch: ChangeProposalPatch,
@@ -1043,6 +1293,10 @@ function resultForWithVerification(proposal: ChangeProposal, reason: string, ver
 
 function resultForWithCommit(proposal: ChangeProposal, reason: string, commit: ChangeProposalCommit): ChangeProposalResult {
   return { ...resultFor(proposal, reason), commit: { ...commit } }
+}
+
+function resultForWithLanding(proposal: ChangeProposal, reason: string, landing: ChangeProposalLanding): ChangeProposalResult {
+  return { ...resultFor(proposal, reason), landing: { ...landing } }
 }
 
 function verificationOperationStatus(status: ChangeProposalVerification['status']): ChangeProposal['operationStatus'] {
@@ -1189,6 +1443,7 @@ function cloneProposal(proposal: ChangeProposal): ChangeProposal {
     risks: [...proposal.risks],
     worktree: proposal.worktree ? { ...proposal.worktree } : undefined,
     commit: proposal.commit ? { ...proposal.commit } : undefined,
+    landing: proposal.landing ? { ...proposal.landing } : undefined,
     patch: proposal.patch ? {
       ...proposal.patch,
       limitations: [...proposal.patch.limitations],

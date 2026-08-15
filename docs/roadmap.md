@@ -16,6 +16,7 @@
 4. v2（已完成）：在独立工作树中提供用户确认后的代码变更提案，仍然默认不提交、不推送；提案状态、worktree 生命周期和证据引用限制在当前 session，不自动生成或应用补丁。
 5. v2.1（已完成并归档）：接收用户或宿主显式提供的有界 unified diff，在 confirmed proposal 的隔离 worktree 中经过二次 digest 确认后应用；继续禁止 source workspace 写入、自动回滚、commit、push、部署、依赖安装和网络访问。
 6. v2.2（已完成）：对已准备或已应用的 patch 提供 session-only review/export；在 Harness Goal、一次性 approval、read-only recipe、sandbox 和 subprocess 约束下，对隔离 worktree 执行一次受控验证并记录 bounded、redacted result。继续禁止 patch 生成、source workspace 写入、commit、merge、push、部署、依赖安装、网络和自动清理。
-7. v2.3（当前实现）：对已应用且 verification=passed 的 patch 提供 session-only isolated-worktree commit draft；commit 必须经过 exact digest、active+armed Goal 和一次性 Harness approval，只能对声明路径执行固定本地 Git staging/commit，并在 postcondition 不确定时保留 worktree。继续禁止 source workspace 写入、merge、push、远程访问、hooks、GPG signing、author override、部署、依赖安装和自动清理。
+7. v2.3（已完成）：对已应用且 verification=passed 的 patch 提供 session-only isolated-worktree commit draft；commit 必须经过 exact digest、active+armed Goal 和一次性 Harness approval，只能对声明路径执行固定本地 Git staging/commit，并在 postcondition 不确定时保留 worktree。继续禁止 source workspace 写入、merge、push、远程访问、hooks、GPG signing、author override、部署、依赖安装和自动清理。
+8. v2.4（当前实现）：对 v2.3 已创建的 session-owned commit 提供独立 source landing draft；只允许 source workspace clean、HEAD exact base revision 下的固定 `merge --ff-only` fast-forward，并要求二次 digest、active+armed Goal 和一次性 Harness approval。继续禁止冲突解决、merge commit、branch 操作、remote、push、回滚和自动清理。
 
 每个版本都应先更新安全边界、预算、部分失败语义和验收 fixture，再扩展工具权限。

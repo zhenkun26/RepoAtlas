@@ -285,6 +285,13 @@ export type ChangeProposalOperationStatus =
   | 'commit-rejected'
   | 'commit-blocked'
   | 'commit-interrupted'
+  | 'landing-awaiting-confirmation'
+  | 'landing-completed'
+  | 'landing-rejected'
+  | 'landing-blocked'
+  | 'landing-interrupted'
+  | 'landing-not-performed'
+  | 'landing-creation-unknown'
   | 'patch-not-applied'
   | 'commit-not-created'
   | 'push-not-performed'
@@ -320,6 +327,10 @@ export interface ChangeProposalCommitRequest {
   commitMessage: string
 }
 
+export interface ChangeProposalLandingRequest {
+  proposalId: string
+}
+
 export interface ChangeProposalTarget {
   relativePath: string
   operation: ChangeProposalOperation
@@ -343,6 +354,10 @@ export type ChangeProposalVerificationStatus = 'not-run' | 'passed' | 'failed' |
 export type ChangeProposalCommitStatus = 'not-prepared' | 'awaiting-confirmation' | 'created' | 'rejected' | 'blocked' | 'interrupted'
 
 export type ChangeProposalCommitExecutionStatus = 'commit-not-created' | 'commit-created' | 'commit-creation-unknown'
+
+export type ChangeProposalLandingStatus = 'not-prepared' | 'awaiting-confirmation' | 'landed' | 'rejected' | 'blocked' | 'interrupted'
+
+export type ChangeProposalLandingExecutionStatus = 'landing-not-performed' | 'landing-completed' | 'landing-creation-unknown'
 
 export interface ChangeProposalPatchFileSummary {
   relativePath: string
@@ -398,6 +413,20 @@ export interface ChangeProposalCommit {
   revision?: string
 }
 
+export interface ChangeProposalLanding {
+  landingId: string
+  confirmationDigest: string
+  status: ChangeProposalLandingStatus
+  sourcePath: string
+  sourceRevision: string
+  commitRevision: string
+  createdAt: string
+  expiresAt: string
+  executionStatus: ChangeProposalLandingExecutionStatus
+  approvalAuditId?: string
+  landedRevision?: string
+}
+
 export interface ChangeProposalPatch {
   patchId: string
   confirmationDigest: string
@@ -414,6 +443,7 @@ export interface ChangeProposalPatch {
 export interface ChangeProposalExecutionStatus {
   patch: ChangeProposalPatchExecutionStatus
   commit: ChangeProposalCommitExecutionStatus
+  landing: ChangeProposalLandingExecutionStatus
   push: 'push-not-performed'
 }
 
@@ -435,11 +465,13 @@ export interface ChangeProposal {
   executionStatus: ChangeProposalExecutionStatus
   patchApplied: boolean
   commitCreated: boolean
+  sourceLanded: boolean
   pushPerformed: false
   createdAt: string
   worktree?: ChangeProposalWorktree
   patch?: ChangeProposalPatch
   commit?: ChangeProposalCommit
+  landing?: ChangeProposalLanding
 }
 
 export interface ChangeProposalResult {
@@ -450,4 +482,5 @@ export interface ChangeProposalResult {
   patchExport?: ChangeProposalPatchExport
   verification?: ChangeProposalVerification
   commit?: ChangeProposalCommit
+  landing?: ChangeProposalLanding
 }

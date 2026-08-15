@@ -1,15 +1,15 @@
 import type { ChangeProposalRequest } from '../types.ts'
-import { ChangeProposalManager, type ChangeProposalCommitAuthorizer, type ChangeProposalVerificationRunner } from '../repository/change-proposal.ts'
+import { ChangeProposalManager, type ChangeProposalCommitAuthorizer, type ChangeProposalLandingAuthorizer, type ChangeProposalVerificationRunner } from '../repository/change-proposal.ts'
 import type { HarnessTool, HarnessToolExecution } from './public.ts'
 
-export function createChangeProposalTool(manager: ChangeProposalManager, verificationRunner?: ChangeProposalVerificationRunner, commitAuthorizer?: ChangeProposalCommitAuthorizer): HarnessTool {
+export function createChangeProposalTool(manager: ChangeProposalManager, verificationRunner?: ChangeProposalVerificationRunner, commitAuthorizer?: ChangeProposalCommitAuthorizer, landingAuthorizer?: ChangeProposalLandingAuthorizer): HarnessTool {
   return {
     name: 'repo_atlas_change_proposal',
-    description: '准备、审阅、导出、确认、拒绝或释放当前 session 的隔离代码变更提案；支持显式确认后将有界补丁应用到隔离 worktree，并可在 Harness 审批后运行只读验证或创建本地 detached-worktree commit；不会修改 source workspace、merge 或推送。',
+    description: '准备、审阅、导出、确认、拒绝或释放当前 session 的隔离代码变更提案；支持显式确认后将有界补丁应用到隔离 worktree、创建本地 detached-worktree commit，并可在 Harness 审批后 fast-forward 落地到 source workspace；不会解决冲突、访问 remote 或推送。',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['prepare', 'confirm', 'reject', 'release', 'prepare-patch', 'review-patch', 'export-patch', 'confirm-patch', 'reject-patch', 'verify-patch', 'prepare-commit', 'confirm-commit', 'reject-commit'] },
+        action: { type: 'string', enum: ['prepare', 'confirm', 'reject', 'release', 'prepare-patch', 'review-patch', 'export-patch', 'confirm-patch', 'reject-patch', 'verify-patch', 'prepare-commit', 'confirm-commit', 'reject-commit', 'prepare-landing', 'confirm-landing', 'reject-landing'] },
         sessionId: { type: 'string' },
         intent: { type: 'string' },
         targets: { type: 'array' },
@@ -23,6 +23,8 @@ export function createChangeProposalTool(manager: ChangeProposalManager, verific
         commitId: { type: 'string' },
         commitConfirmationDigest: { type: 'string' },
         commitMessage: { type: 'string', description: '显式提供的 bounded、非 secret-like 本地 commit message' },
+        landingId: { type: 'string' },
+        landingConfirmationDigest: { type: 'string' },
       },
       additionalProperties: false,
     },
@@ -80,6 +82,18 @@ export function createChangeProposalTool(manager: ChangeProposalManager, verific
         if (!request.commitId) return { status: 'blocked', operationStatus: 'commit-blocked', reason: 'reject-commit requires commitId' }
         return manager.rejectCommit(request.commitId)
       }
+      if (request.action === 'prepare-landing') {
+        if (!request.proposalId) return { status: 'blocked', operationStatus: 'landing-blocked', reason: 'prepare-landing requires proposalId' }
+        return manager.prepareLanding({ proposalId: request.proposalId }, signal)
+      }
+      if (request.action === 'confirm-landing') {
+        if (!request.landingId) return { status: 'blocked', operationStatus: 'landing-blocked', reason: 'confirm-landing requires landingId' }
+        return manager.confirmLanding(request.landingId, request.landingConfirmationDigest ?? '', landingAuthorizer, execution ? { callId: execution.callId, agent: execution.agent } : undefined, signal)
+      }
+      if (request.action === 'reject-landing') {
+        if (!request.landingId) return { status: 'blocked', operationStatus: 'landing-blocked', reason: 'reject-landing requires landingId' }
+        return manager.rejectLanding(request.landingId)
+      }
       if (!request.proposalId) return { status: 'blocked', operationStatus: 'blocked', reason: `${request.action} requires proposalId` }
       if (request.action === 'confirm') return manager.confirm(request.proposalId, request.confirmationDigest ?? '', signal)
       if (request.action === 'reject') return manager.reject(request.proposalId)
@@ -89,7 +103,7 @@ export function createChangeProposalTool(manager: ChangeProposalManager, verific
 }
 
 function proposalInput(input: unknown): {
-  action: 'prepare' | 'confirm' | 'reject' | 'release' | 'prepare-patch' | 'review-patch' | 'export-patch' | 'confirm-patch' | 'reject-patch' | 'verify-patch' | 'prepare-commit' | 'confirm-commit' | 'reject-commit'
+  action: 'prepare' | 'confirm' | 'reject' | 'release' | 'prepare-patch' | 'review-patch' | 'export-patch' | 'confirm-patch' | 'reject-patch' | 'verify-patch' | 'prepare-commit' | 'confirm-commit' | 'reject-commit' | 'prepare-landing' | 'confirm-landing' | 'reject-landing'
   request?: ChangeProposalRequest
   proposalId?: string
   confirmationDigest?: string
@@ -100,9 +114,11 @@ function proposalInput(input: unknown): {
   commitId?: string
   commitConfirmationDigest?: string
   commitMessage?: string
+  landingId?: string
+  landingConfirmationDigest?: string
 } {
   if (!isRecord(input)) return { action: 'prepare' }
-  const action = input.action === 'confirm' || input.action === 'reject' || input.action === 'release' || input.action === 'prepare-patch' || input.action === 'review-patch' || input.action === 'export-patch' || input.action === 'confirm-patch' || input.action === 'reject-patch' || input.action === 'verify-patch' || input.action === 'prepare-commit' || input.action === 'confirm-commit' || input.action === 'reject-commit' ? input.action : 'prepare'
+  const action = input.action === 'confirm' || input.action === 'reject' || input.action === 'release' || input.action === 'prepare-patch' || input.action === 'review-patch' || input.action === 'export-patch' || input.action === 'confirm-patch' || input.action === 'reject-patch' || input.action === 'verify-patch' || input.action === 'prepare-commit' || input.action === 'confirm-commit' || input.action === 'reject-commit' || input.action === 'prepare-landing' || input.action === 'confirm-landing' || input.action === 'reject-landing' ? input.action : 'prepare'
   const sessionId = typeof input.sessionId === 'string' ? input.sessionId : ''
   const intent = typeof input.intent === 'string' ? input.intent : ''
   const targets = Array.isArray(input.targets) ? input.targets.flatMap(parseTarget) : []
@@ -119,6 +135,8 @@ function proposalInput(input: unknown): {
     commitId: typeof input.commitId === 'string' ? input.commitId : undefined,
     commitConfirmationDigest: typeof input.commitConfirmationDigest === 'string' ? input.commitConfirmationDigest : undefined,
     commitMessage: typeof input.commitMessage === 'string' ? input.commitMessage : undefined,
+    landingId: typeof input.landingId === 'string' ? input.landingId : undefined,
+    landingConfirmationDigest: typeof input.landingConfirmationDigest === 'string' ? input.landingConfirmationDigest : undefined,
   }
 }
 
