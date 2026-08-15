@@ -1,75 +1,134 @@
 # RepoAtlas / 代码星图
 
-RepoAtlas 是一个面向 DeepSeek Harness 的安全只读代码库分析插件。它先通过多轮 GoalSpec 询问明确目标，再按固定的 `Clarify → Policy Gate → Plan → Read-only ReAct → Verify → Report` 流程，生成带证据索引的 Markdown、Mermaid 和结构化 atlas 数据；当前公开准备工作采用源码仓库优先的分发方式。
+> Safety-first, evidence-backed repository analysis and bounded change-lifecycle plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
+>
+> 面向 DeepSeek Harness 的安全优先、证据驱动代码库分析与有界变更生命周期插件。
 
-## 当前 v1 能做什么
+[![CI](https://github.com/zhenkun26/RepoAtlas/actions/workflows/ci.yml/badge.svg)](https://github.com/zhenkun26/RepoAtlas/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933?logo=node.js&logoColor=white)](package.json)
 
-- 项目接手概览：技术栈、入口线索、核心目录、运行/测试配置和推荐阅读顺序。
-- 架构概览：结合受限 TypeScript/JavaScript 语法观察与静态文本匹配；AST 直接支持的关系标记为“语法确认”，文本-only 关系仍标记为“推测”。
-- v1.3 语法确认：仅分析已确认范围内、通过读取和脱敏的 `.ts`、`.tsx`、`.js`、`.jsx` 文本；输出有界的 import/export、函数、类、变量和有限调用观察。
-- 多轮澄清：每轮只问一个主要问题；允许用户直接开始，但只使用安全默认值。
-- 安全只读：默认排除生成物和依赖目录；拒绝路径逃逸、外部符号链接、敏感文件、Shell、网络、安装和 Git 推送。
-- 部分结果：二进制、超限、不可读、解析失败、预算耗尽或用户中断都会保留状态，不伪装成完整成功。
-- AST 安全边界：不执行代码、不加载模块、不解析运行时依赖、不访问网络；不支持的语言、语法错误和 AST 预算不足会显式保留为未分析或失败状态。
+RepoAtlas helps an AI coding harness understand an unfamiliar repository, explain what is directly evidenced versus inferred, and inspect a proposed change through a bounded, auditable lifecycle. The default analysis path is read-only; any controlled action is explicit, approval-gated, and sandbox-aware.
 
-## 当前 v2 能做什么
+## Why RepoAtlas
 
-- 在当前 session 内创建、确认、审阅、验证和导出有界的变更提案；补丁只接受调用方明确提供的 bounded unified diff，不自动生成代码。
-- 在隔离 worktree 中执行经过 Goal、approval、digest 和状态检查的 patch apply、verification、local commit 与 source fast-forward landing；这些动作不 push、不联网、不部署、不自动清理。
-- 通过 `inspect`、`list`、`history`、`inspect-live`、`inspect-recovery`、`inspect-landing` 和 `inspect-release` 查看当前 session 的生命周期快照、事件和本地关系；这些结果都是 detached、bounded、session-only observation，不是授权或已执行结果。
-- 所有 evidence cache、proposal registry、event history 和 preflight/readiness assessment 都在进程结束时丢弃，不跨 session、不写 workspace、不上传代码。
+Repository analysis should be useful without becoming an unbounded automation surface. RepoAtlas is designed around three principles:
 
-## 开源化状态
+- **Evidence before confidence** — bounded file evidence, syntax-confirmed observations, and explicit partial or unknown states instead of invented certainty.
+- **Read-only by default** — repository analysis does not require Shell, network access, dependency installation, source-workspace writes, or Git push.
+- **Lifecycle clarity** — proposals, patch review, verification, commit, landing, recovery, and release readiness remain distinguishable states; an observation is never presented as an applied patch, commit, landing, or release.
 
-当前仓库继续采用源码优先分发：根目录包含 MIT 工作许可证、贡献/安全/行为规范和变更记录，GitHub Actions 在 Node.js 22/24 上运行质量门禁，并在本地验证 source tarball 可离线安装。`package.json` 仍保持 `private: true`；这份 tarball 检查不等于 npm 发布包或普通 Node consumer import 契约。真实 Harness 兼容 smoke 已在公开 pinned revision 上通过，但这仍不等于首个公开 release。支持基线和 release 流程见 [support policy](docs/support-policy.md)、[source-first release process](docs/release-process.md)、[公开发布 checklist](docs/release-checklist.md) 和 [后续路线](docs/roadmap.md)。
+## What it provides
 
-## 授权与来源说明
+### Evidence-backed repository understanding
 
-RepoAtlas 采用 MIT License，允许使用、修改和再分发，但再分发时必须保留许可证通知和免责声明。公开引用、集成说明、文章、论文或衍生项目中请明确标注 **RepoAtlas / 代码星图**，并链接来源仓库 <https://github.com/zhenkun26/RepoAtlas>。这项来源说明是项目的 provenance policy，不改变 MIT License 的法律条款；详见 [NOTICE](NOTICE.md)。
+- Onboarding: technology stack, entry points, important directories, tests, configuration, and a recommended reading order.
+- Architecture observations: bounded TypeScript/JavaScript syntax confirmation combined with clearly labeled text-based inference.
+- Goal clarification: one primary question at a time with safe read-only defaults.
+- Incremental analysis: session-only evidence reuse for changed, new, or newly requested scope.
+- Structured atlas data plus Markdown and Mermaid reporting with evidence references.
 
-## 本地运行
+### Bounded change lifecycle
 
-环境要求：Node.js 22+。首次使用先按锁文件安装项目开发依赖：
+- Session-only change proposals with explicit targets and digests.
+- Patch review, export, verification, and isolated-worktree commit preparation.
+- Read-only live state, lifecycle history, recovery guidance, landing preflight, and release preflight observations.
+- Explicit separation between “ready to review” and “already executed”.
+
+### Harness integration
+
+- Public `ctx.tools.register` integration through `src/harness/plugin.ts`.
+- `repo-atlas/harness` bundle loading through `cordis.patch.yml`.
+- Canonical Harness tool output schemas and text renderers.
+- Real compatibility smoke support for the pinned Harness revision in [reference/harness-compatibility.json](reference/harness-compatibility.json).
+
+## Quick start
+
+### Requirements
+
+- Node.js 22 or newer for RepoAtlas development and local checks.
+- A compatible DeepSeek Harness checkout for running the plugin.
+- pnpm 11.7.0 and Node.js 24.x for the pinned real-Harness smoke contract.
+
+### Install from a source checkout
+
+RepoAtlas is currently distributed as a source/plugin bundle. Clone both repositories, install the Harness dependencies, and add the local RepoAtlas checkout:
 
 ```bash
+git clone https://github.com/zhenkun26/RepoAtlas.git
+git clone https://github.com/deepseek-ai/deepseek-harness.git
+
+cd /absolute/path/to/deepseek-harness
+pnpm install
+pnpm dsh plugin --profile web add /absolute/path/to/RepoAtlas
+pnpm dsh web
+```
+
+In the Harness Web UI, the plugin should appear as `repo-atlas/harness`. The plugin does not modify the Harness core; the bundle patch loads the adapter from this repository.
+
+### Run RepoAtlas locally
+
+```bash
+cd /absolute/path/to/RepoAtlas
 npm ci
-```
-
-项目将 `typescript` 和 `@types/node` 固定为开发依赖，不要求全局安装 `tsc`。类型检查使用 `tsc --noEmit`，不会生成编译产物：
-
-```bash
-npm run typecheck
 npm test
-npm run lint
-npm run verify:source-artifact
-npm run validate:openspec
-git diff --check
+npm run demo
 ```
 
-公开 release candidate 的只读检查不是日常质量门禁；在版权持有人确认和 release notes 完成前，它会按设计返回 `blocked`：
+The demo and test suite run directly from the TypeScript source under the repository's Node.js toolchain. No global TypeScript installation is required.
 
-```bash
-npm run verify:release-preflight
+## How it works
+
+The core workflow is intentionally explicit:
+
+```text
+Goal → Clarify → Policy Gate → Plan → Read-only ReAct → Verify → Report
 ```
 
-Node.js 24 可直接运行仓库中的 TypeScript 测试；`npm run typecheck` 用于检查 `src/` 和 `test/` 的完整类型契约。
+For change-oriented work, the session can additionally expose bounded lifecycle observations:
 
-如果本机没有 `openspec` CLI，OpenSpec 门禁可以通过固定版本的临时 CLI 执行：
-
-```bash
-npx --yes @fission-ai/openspec@1.7.0 validate --all --strict --no-interactive
+```text
+Proposal → Patch Review → Verification → Isolated Commit → Landing Preflight → Release Preflight
 ```
 
-实际 Harness 加载使用本项目自带的 bundle manifest：在 Harness checkout 中执行 `pnpm dsh plugin --profile web add /absolute/path/to/RepoAtlas`，再运行 `pnpm dsh web`。适配器入口是 `src/harness/plugin.ts`，只使用公开的 `ctx.tools.register` 与 canonical output 契约；当前仓库没有把 Harness 私有源码或核心 fork 复制进来。兼容性 smoke 的公开目标记录在 [reference/harness-compatibility.json](reference/harness-compatibility.json)，可在满足该 revision 的 Harness checkout 中运行：
+These are separate states, not a promise that code has been generated, applied, committed, landed, released, or published. Any write-capable path requires the relevant explicit configuration, exact digest checks, active Goal/approval context, and the repository's sandbox and postcondition controls.
 
-```bash
-REPO_ATLAS_HARNESS_ROOT=/absolute/path/to/deepseek-harness \
-  node scripts/verify-harness-compatibility.mjs
-```
+## Safety model
 
-该命令和 [手动 Harness workflow](.github/workflows/harness-compatibility.yml) 只用于显式兼容性验收，不是插件 runtime 能力。普通 npm consumer 直接 import 当前源码 `.ts` entry point 也不属于支持契约，因为 Node 的 built-in TypeScript stripping 会拒绝从 `node_modules` 加载这类文件。
+| Boundary | RepoAtlas behavior |
+| --- | --- |
+| Core analysis | Read-only repository inspection with path, content, budget, and sensitive-file policies. |
+| Evidence and lifecycle state | Evidence cache, proposal registry, event history, and preflight/readiness assessment are session-only and detached. |
+| Controlled actions | Opt-in only; fixed recipes, explicit approval, sandbox enforcement, and bounded redacted output are required. |
+| Git lifecycle | Isolated-worktree operations are bounded and local; automatic merge conflict resolution, remote access, push, rollback, and cleanup are not provided. |
+| Network and dependencies | The RepoAtlas runtime does not fetch repositories, call remote services, install dependencies, or upload code. |
+| Failure behavior | Missing capabilities, denied approval, malformed input, budget exhaustion, and uncertain postconditions fail closed or remain explicitly partial. |
 
-## 直接调用核心 API
+## Compatibility and support
+
+- Node.js support baseline: **22+**.
+- CI quality matrix: **Node.js 22.x and 24.x**.
+- Pinned real Harness smoke: revision [`47f943859bef60e4160492346772ded9b24f765a`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a), Node.js 24.x, pnpm 11.7.0.
+- The `master` branch is navigation context, not a compatibility guarantee; the exact revision in the manifest is the evidence contract.
+- Support is best-effort and currently has no SLA. Security reports should follow [SECURITY.md](SECURITY.md).
+
+Read the complete [support policy](docs/support-policy.md) and [Harness compatibility manifest](reference/harness-compatibility.json) before integrating RepoAtlas into another workflow.
+
+## Distribution and release status
+
+RepoAtlas remains source-first:
+
+- `cordis.patch.yml` and the `dsh.bundle` package metadata define the supported Harness loading path.
+- `package.json` intentionally keeps `private: true`.
+- `npm run verify:source-artifact` is a local packed-install evaluation; it is not an npm publication and does not create an ordinary Node consumer import contract.
+- No compiled `dist/` distribution is promised.
+- Git tags, GitHub Releases, and npm publication are separate release decisions. The current project documentation does not claim that an npm package exists.
+
+The manual [release process](docs/release-process.md) and [release checklist](docs/release-checklist.md) distinguish candidate readiness from actual release state. A green preflight is advisory evidence; it does not create a tag, GitHub Release, npm publication, or deployment.
+
+## Direct core API
+
+RepoAtlas can also be used directly from a source checkout:
 
 ```ts
 import { createGoalSpec, resolveStart, analyzeRepository, generateReport } from './src/index.ts'
@@ -77,18 +136,50 @@ import { createGoalSpec, resolveStart, analyzeRepository, generateReport } from 
 const goal = resolveStart(createGoalSpec({ intent: 'onboarding' }), 'direct')
 const session = await analyzeRepository(goal, '/path/to/workspace')
 const report = generateReport(session)
+
 console.log(report.markdown)
 ```
 
-完整说明见：
+Direct API usage still follows the same evidence, path, sensitive-content, and budget policies. Importing the raw `.ts` entry point from an installed `node_modules` package is not part of the current support contract.
 
-- [v1 使用说明](docs/v1-usage.md)
-- [安全边界](docs/security-boundary.md)
-- [限制与后续路线](docs/roadmap.md)
-- [Harness 集成说明](docs/harness-integration.md)
-- [公开贡献说明](CONTRIBUTING.md)
-- [安全报告](SECURITY.md)
-- [授权与来源说明](NOTICE.md)
-- [支持策略](docs/support-policy.md)
-- [源码优先 release 流程](docs/release-process.md)
-- [公开发布 checklist](docs/release-checklist.md)
+## Development and verification
+
+```bash
+npm ci
+npm run typecheck
+npm test
+npm run lint
+npm run verify:source-artifact
+npm run validate:openspec
+npm run verify:release-preflight
+git diff --check
+```
+
+The release preflight is a local, read-only candidate check. It intentionally reports `blocked` when the worktree, OpenSpec state, release documents, or human release gates are not ready; it never performs a tag, release, publish, push, deployment, or cleanup operation.
+
+## Open-source governance
+
+RepoAtlas is released under the [MIT License](LICENSE). Reuse, modification, and redistribution are allowed when the MIT copyright notice, license text, and disclaimer are retained.
+
+When publicly citing, integrating, documenting, or deriving from RepoAtlas, please identify **RepoAtlas / 代码星图** and link to the canonical source repository: <https://github.com/zhenkun26/RepoAtlas>. This provenance request is maintained separately in [NOTICE.md](NOTICE.md) and does not add legal conditions to the MIT License.
+
+- Contributions: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security reports: [SECURITY.md](SECURITY.md)
+- Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+
+## Chinese summary
+
+RepoAtlas 是一个面向 DeepSeek Harness 的安全只读代码库分析插件。它通过 GoalSpec 明确目标，按 `Clarify → Policy Gate → Plan → Read-only ReAct → Verify → Report` 生成带证据索引的 Markdown、Mermaid 和结构化 atlas 数据，并提供 session-only 的变更提案、补丁审阅、验证、生命周期历史、恢复建议与 release preflight 观察。
+
+核心原则是：默认只读、证据优先、边界显式、失败关闭。项目当前采用源码优先分发，暂不提供 npm 包或编译后的 `dist/`，也不会把 proposal、preflight 或 landing relation 误报为补丁、commit、landing 或 release 已应用。
+
+## Documentation
+
+- [v1 usage](docs/v1-usage.md)
+- [Harness integration](docs/harness-integration.md)
+- [Security boundary](docs/security-boundary.md)
+- [Support policy](docs/support-policy.md)
+- [Source-first release process](docs/release-process.md)
+- [Public release checklist](docs/release-checklist.md)
+- [Roadmap and limitations](docs/roadmap.md)
+- [Attribution notice](NOTICE.md)
