@@ -6,4 +6,4 @@
 ## 2. Acceptance
 
 - [x] 2.1 Validate workflow/spec consistency, run repository quality gates, and preserve manual-only read permissions and bounded smoke cleanup.
-- [ ] 2.2 Trigger the repaired Harness compatibility workflow and record a successful exact-pin live Web boot result.
+- [x] 2.2 Trigger the repaired Harness compatibility workflow and record a successful exact-pin live Web boot result.

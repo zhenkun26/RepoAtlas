@@ -7,4 +7,4 @@
 ## 2. Acceptance
 
 - [x] 2.1 Build and typecheck RepoAtlas, then pass the focused controlled-action regression tests.
-- [ ] 2.2 Pass the official API contract against an exact clean pinned Harness checkout and strict OpenSpec validation.
+- [x] 2.2 Pass the official API contract against an exact clean pinned Harness checkout and strict OpenSpec validation.

@@ -20,7 +20,7 @@ This checklist describes release readiness; it is not an instruction to publish,
 - [x] Run a pinned real DeepSeek Harness smoke test and record the compatible revision: `47f943859bef60e4160492346772ded9b24f765a` with Node 24.x and pnpm 11.7.0.
 - [x] Recheck README installation instructions against the actual public Harness release at the pinned revision.
 - [x] Compile-check RepoAtlas public facades against official declarations from the exact Harness revision; a task-owned exact-pin checkout passed the v2.19 API probe.
-- [ ] Run and review the v2.22-repaired strengthened live Web boot workflow; the earlier config/help smoke and the host-only failed run are historical evidence and do not satisfy the activation contract.
+- [x] Run and review the v2.22-repaired strengthened live Web boot workflow; [run 31895791477](https://github.com/zhenkun26/RepoAtlas/actions/runs/31895791477) completed the exact-pin root build, official API contract, live loopback Web probe, and owned-process cleanup.
 
 ## Distribution decision
 
