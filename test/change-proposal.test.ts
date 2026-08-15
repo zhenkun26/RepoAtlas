@@ -12,6 +12,7 @@ import type { AnalysisSession, ChangeProposalRequest, ChangeProposalResult, Chan
 
 const execFileAsync = promisify(execFile)
 const fixtureRoot = path.resolve('test/fixtures/complete-repo')
+const fakeBaseRevision = 'b'.repeat(40)
 
 class FakeGitAdapter implements GitWorktreeAdapter {
   createCount = 0
@@ -21,9 +22,14 @@ class FakeGitAdapter implements GitWorktreeAdapter {
   landCount = 0
   inspectCount = 0
   inspectSourceCount = 0
+  inspectLandingCount = 0
   commitRevision = 'a'.repeat(40)
-  sourceRevision = 'base-1'
+  sourceRevision = fakeBaseRevision
   sourceDirty = false
+  landingSourceIsAncestor = true
+  landingTargetIsAncestor = false
+  failLandingInspection = false
+  failLandingTarget = false
   dirty = false
   changedPaths: string[] = []
   failDiscovery = false
@@ -38,7 +44,7 @@ class FakeGitAdapter implements GitWorktreeAdapter {
 
   async discover(workspaceRoot: string): Promise<{ repositoryRoot: string; baseRevision: string }> {
     if (this.failDiscovery) throw new Error('git unavailable')
-    return { repositoryRoot: workspaceRoot, baseRevision: 'base-1' }
+    return { repositoryRoot: workspaceRoot, baseRevision: fakeBaseRevision }
   }
 
   async create(_repositoryRoot: string, baseRevision: string): Promise<ChangeProposalWorktree> {
@@ -57,6 +63,14 @@ class FakeGitAdapter implements GitWorktreeAdapter {
     if (this.failSourceInspection) throw new Error('source inspection unavailable')
     if (this.failLandingPostcondition && this.landCount > 0) throw new Error('source postcondition inspection unavailable')
     return { path: sourceWorkspaceRoot, repositoryRoot, revision: this.sourceRevision, dirty: this.sourceDirty }
+  }
+
+  async inspectLanding(repositoryRoot: string, sourceWorkspaceRoot: string, _expectedSourceRevision: string, commitRevision: string): Promise<{ source: { path: string; repositoryRoot: string; revision: string; dirty: boolean }; targetRevision: string; sourceIsAncestor: boolean; targetIsAncestor: boolean }> {
+    this.inspectLandingCount += 1
+    if (this.failLandingInspection) throw new Error('landing inspection unavailable')
+    if (this.failLandingTarget) throw Object.assign(new Error('target commit is not locally resolvable'), { name: 'LandingInspectionError', targetUnavailable: true })
+    const source = await this.inspectSource(repositoryRoot, sourceWorkspaceRoot)
+    return { source, targetRevision: commitRevision, sourceIsAncestor: this.landingSourceIsAncestor, targetIsAncestor: this.landingTargetIsAncestor }
   }
 
   async applyPatch(): Promise<void> {
@@ -652,6 +666,88 @@ test('live inspection distinguishes partial, unknown, abort, and unknown proposa
   assert.equal(missing.status, 'blocked')
   assert.equal(missing.liveInspection, undefined)
   assert.equal(adapter.inspectSourceCount + adapter.inspectCount, beforeCalls)
+})
+
+test('landing preflight reports local relations without landing or lifecycle mutation', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+  const pending = await manager.prepare(request())
+  const proposalId = pending.proposal?.proposalId ?? ''
+
+  const notApplicable = await manager.inspectLanding(proposalId)
+  assert.equal(notApplicable.landingAssessment?.status, 'not-applicable')
+  assert.equal(notApplicable.landingAssessment?.relation, 'not-applicable')
+  assert.equal(adapter.inspectLandingCount, 0)
+
+  const created = await prepareCreatedCommit(manager, passedVerificationRunner(), 'landing-preflight')
+  const createdId = created.proposal?.proposalId ?? ''
+  const beforeHistory = manager.history({ proposalId: createdId }).total
+  const fastForwardable = await manager.inspectLanding(createdId)
+  assert.equal(fastForwardable.landingAssessment?.status, 'available')
+  assert.equal(fastForwardable.landingAssessment?.relation, 'fast-forwardable')
+  assert.equal(fastForwardable.landingAssessment?.clean, true)
+  assert.equal(fastForwardable.landingAssessment?.baseRevisionMatches, true)
+  assert.equal(fastForwardable.landingAssessment?.sourceRevision, fakeBaseRevision)
+  assert.equal(fastForwardable.landingAssessment?.targetRevision, adapter.commitRevision)
+  assert.equal(JSON.stringify(fastForwardable.landingAssessment).includes(fixtureRoot), false)
+  assert.equal(adapter.landCount, 0)
+  assert.equal(adapter.removeCount, 0)
+
+  const detached = fastForwardable.landingAssessment
+  if (!detached) throw new Error('landing assessment should be present')
+  detached.relation = 'diverged'
+  const repeated = await manager.inspectLanding(createdId)
+  assert.equal(repeated.landingAssessment?.relation, 'fast-forwardable')
+  assert.equal(manager.history({ proposalId: createdId }).total, beforeHistory)
+
+  adapter.sourceRevision = adapter.commitRevision
+  adapter.landingSourceIsAncestor = false
+  adapter.landingTargetIsAncestor = true
+  const alreadyLanded = await manager.inspectLanding(createdId)
+  assert.equal(alreadyLanded.landingAssessment?.relation, 'already-landed')
+
+  adapter.sourceRevision = 'c'.repeat(40)
+  const sourceAhead = await manager.inspectLanding(createdId)
+  assert.equal(sourceAhead.landingAssessment?.relation, 'source-ahead')
+  assert.equal(sourceAhead.landingAssessment?.baseRevisionMatches, false)
+
+  adapter.landingTargetIsAncestor = false
+  const drifted = await manager.inspectLanding(createdId)
+  assert.equal(drifted.landingAssessment?.relation, 'source-revision-drift')
+
+  adapter.sourceRevision = fakeBaseRevision
+  adapter.landingSourceIsAncestor = false
+  const diverged = await manager.inspectLanding(createdId)
+  assert.equal(diverged.landingAssessment?.relation, 'diverged')
+
+  adapter.sourceDirty = true
+  const dirty = await manager.inspectLanding(createdId)
+  assert.equal(dirty.landingAssessment?.relation, 'source-dirty')
+  adapter.sourceDirty = false
+
+  adapter.failLandingTarget = true
+  const targetUnavailable = await manager.inspectLanding(createdId)
+  assert.equal(targetUnavailable.landingAssessment?.status, 'unknown')
+  assert.equal(targetUnavailable.landingAssessment?.relation, 'target-unavailable')
+  adapter.failLandingTarget = false
+  adapter.failLandingInspection = true
+  const unknown = await manager.inspectLanding(createdId)
+  assert.equal(unknown.landingAssessment?.status, 'unknown')
+  assert.equal(unknown.landingAssessment?.relation, 'unknown')
+  adapter.failLandingInspection = false
+
+  const controller = new AbortController()
+  controller.abort()
+  const beforeAbortCalls = adapter.inspectLandingCount
+  const interrupted = await manager.inspectLanding(createdId, controller.signal)
+  assert.equal(interrupted.landingAssessment?.status, 'unknown')
+  assert.equal(interrupted.landingAssessment?.relation, 'unknown')
+  assert.equal(adapter.inspectLandingCount, beforeAbortCalls)
+
+  const missing = await manager.inspectLanding('proposal-unknown')
+  assert.equal(missing.status, 'blocked')
+  assert.equal(missing.landingAssessment, undefined)
 })
 
 test('proposal validation preserves safe partial targets and bounded evidence', async () => {
@@ -1403,12 +1499,21 @@ test('node Git adapter fast-forwards the clean source workspace from an isolated
     const sourceBefore = await adapter.inspectSource(revision.repositoryRoot, root)
     assert.equal(sourceBefore.revision, revision.baseRevision)
     assert.equal(sourceBefore.dirty, false)
+    const preflight = await adapter.inspectLanding(revision.repositoryRoot, root, revision.baseRevision, commitRevision)
+    assert.equal(preflight.source.revision, revision.baseRevision)
+    assert.equal(preflight.targetRevision, commitRevision)
+    assert.equal(preflight.sourceIsAncestor, true)
+    assert.equal(preflight.targetIsAncestor, false)
     const landedRevision = await adapter.land(revision.repositoryRoot, root, revision.baseRevision, commitRevision)
     assert.equal(landedRevision, commitRevision)
     assert.equal(await fs.readFile(path.join(root, 'README.md'), 'utf8'), 'landed\n')
     const sourceAfter = await adapter.inspectSource(revision.repositoryRoot, root)
     assert.equal(sourceAfter.revision, commitRevision)
     assert.equal(sourceAfter.dirty, false)
+    const postflight = await adapter.inspectLanding(revision.repositoryRoot, root, revision.baseRevision, commitRevision)
+    assert.equal(postflight.source.revision, commitRevision)
+    assert.equal(postflight.sourceIsAncestor, true)
+    assert.equal(postflight.targetIsAncestor, true)
     const committed = await adapter.inspect(revision.repositoryRoot, worktree)
     assert.equal(committed.dirty, false)
     assert.equal(committed.identity, worktree.identity)

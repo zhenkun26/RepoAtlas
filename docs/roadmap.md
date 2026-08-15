@@ -22,6 +22,7 @@
 10. v2.6（已完成）：提供固定上限、newest-first 的 session-only proposal summary listing，支持发现 proposal id 后继续 inspect；不返回路径、evidence、digest、patch text、commit message 或 worktree，不刷新 Git，不跨 session。
 11. v2.7（已完成）：提供 source workspace 与 session-owned worktree 的只读 live-state inspection，区分 available/partial/unknown/not-applicable，并保留 creation-unknown 与其他 lifecycle 状态；不写 Git、不修复、不改变 registry、不持久化。
 12. v2.8（已完成）：提供 bounded、脱敏、session-only 的 proposal lifecycle event history，记录实际状态转移及 blocked/interrupted/uncertain 结果；history 只读、不刷新 Git、不持久化、不跨 session。
-13. v2.9（当前实现）：提供 session-only `inspect-recovery` guidance，将 proposal registry 状态映射为 bounded 的下一步建议和 manual-review-required/no-action 结论；不执行 recovery、不刷新 Git、不授权、不持久化。rollback、reset、revert、merge、冲突解决、force cleanup 和团队协作索引仍不属于本版本。
+13. v2.9（已完成）：提供 session-only `inspect-recovery` guidance，将 proposal registry 状态映射为 bounded 的下一步建议和 manual-review-required/no-action 结论；不执行 recovery、不刷新 Git、不授权、不持久化。rollback、reset、revert、merge、冲突解决、force cleanup 和团队协作索引仍不属于本版本。
+14. v2.10（当前实现）：提供 session-only `inspect-landing` preflight，使用固定本地 Git read-only inspection 区分 fast-forwardable、already-landed、source-ahead、diverged、dirty、revision drift、target unavailable 和 unknown；不执行 landing、merge、冲突解决、rollback、cleanup、remote 或 push，也不把观察结果视为授权或已完成。
 
 每个版本都应先更新安全边界、预算、部分失败语义和验收 fixture，再扩展工具权限。

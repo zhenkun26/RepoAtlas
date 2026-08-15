@@ -40,6 +40,7 @@ test('Harness adapter registers read-only analysis and session-only proposal too
   assert.match(JSON.stringify(proposal.parameters), /history/)
   assert.match(JSON.stringify(proposal.parameters), /inspect-recovery/)
   assert.match(JSON.stringify(proposal.parameters), /inspect-live/)
+  assert.match(JSON.stringify(proposal.parameters), /inspect-landing/)
   assert.match(JSON.stringify(proposal.parameters), /limit/)
   assert.deepEqual(analysis.output.schema, { type: 'object' })
   assert.match(analysis.output.render({}, { policy: 'readonly' })[0]?.text ?? '', /"policy": "readonly"/)
@@ -115,6 +116,16 @@ test('Harness adapter registers read-only analysis and session-only proposal too
   const unknownLive = await proposal.execute({ action: 'inspect-live', proposalId: 'proposal-unknown' }) as { status: string; liveInspection?: unknown }
   assert.equal(unknownLive.status, 'blocked')
   assert.equal(unknownLive.liveInspection, undefined)
+  const landing = await proposal.execute({ action: 'inspect-landing', proposalId: prepared.proposal?.proposalId }) as { status: string; landingAssessment?: { status: string; relation: string } }
+  assert.equal(landing.status, 'awaiting-confirmation')
+  assert.equal(landing.landingAssessment?.status, 'not-applicable')
+  assert.equal(landing.landingAssessment?.relation, 'not-applicable')
+  const missingLanding = await proposal.execute({ action: 'inspect-landing' }) as { status: string; operationStatus: string }
+  assert.equal(missingLanding.status, 'blocked')
+  assert.equal(missingLanding.operationStatus, 'blocked')
+  const unknownLanding = await proposal.execute({ action: 'inspect-landing', proposalId: 'proposal-unknown' }) as { status: string; landingAssessment?: unknown }
+  assert.equal(unknownLanding.status, 'blocked')
+  assert.equal(unknownLanding.landingAssessment, undefined)
   const clarification = await analysis.execute({}) as { clarification?: { question?: { field?: string } } }
   assert.equal(clarification.clarification?.question?.field, 'intent')
   assert.ok(logs.some((message) => message.includes('read-only')))

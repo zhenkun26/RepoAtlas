@@ -76,6 +76,14 @@ v2.9 的 `repo_atlas_change_proposal` 增加 `inspect-recovery`。它只读取�
 
 inspect-recovery 不访问 source/worktree/Git/history、approval、Goal、sandbox、subprocess、network 或 filesystem，不改变 proposal/lifecycle/event history，不持久化、不跨 session，不返回 path、digest、patch text、commit message、evidence、command 或 approval 数据。unknown/空 proposal id fail closed，结果为 detached snapshot。
 
+## v2.10 read-only landing preflight
+
+v2.10 的 `inspect-landing` 只接受当前 session 中已创建且 revision 已知的 local commit proposal id；source workspace、recorded base revision、session-owned worktree identity 和 target revision 全部由 proposal registry 派生，工具输入不能覆盖路径、revision、merge strategy 或命令。没有 created commit 的 proposal 返回 `not-applicable`，不会创建 worktree 或尝试 landing。
+
+adapter 只执行固定、shell=false 的本地 Git inspection：source repository/path、HEAD、clean 状态、target commit 解析，以及双向 `merge-base --is-ancestor`。结果区分 `fast-forwardable`、`already-landed`、`source-ahead`、`diverged`、`source-dirty`、`source-revision-drift`、`target-unavailable` 和 `unknown`；dirty、identity mismatch、revision drift、target/ancestry failure 或 abort 不会返回 landing-ready 成功结论。preflight 是观察，不是授权、approval、landing 完成或冲突解决建议。
+
+inspect-landing 不调用 `commit`、`land`、`remove`、patch、approval、Goal、sandbox 或 subprocess mutation，不写 source/index/worktree/磁盘，不联网、不持久化、不追加 lifecycle event。结果是 bounded、detached、session-only observation，assessment 不返回 absolute path、patch text、digest、command 或 approval data；后续实际 landing 必须重新执行既有 digest、Goal、approval、clean source 和 exact-base 检查。
+
 ## 路径与文件
 
 - workspace 根目录先规范化；包含 `..` 的请求直接拒绝。
@@ -100,4 +108,4 @@ AST 只处理已确认 scope 内的 `.ts`、`.tsx`、`.js`、`.jsx` 脱敏文本
 
 ## 回滚
 
-RepoAtlas 是无迁移的插件。停用 Harness profile 或移除本项目目录即可回滚，不需要恢复数据库或远程配置。v2.9 guidance、v2.8 event history、v2.7 live observation、v2.6 summary listing 与 v2.5 inspection 不新增持久状态；proposal/event 与既有 patch/export/verification/commit/landing registry 随进程结束丢弃。source landing 只执行显式确认的 local fast-forward，remote 不会被工具访问或更新。孤儿 worktree、landing uncertainty、manual-review 状态或被淘汰的历史事件仍按人工检查和恢复路径处理，工具不会跨 session 自动接管、reset、删除、回滚或重建历史。
+RepoAtlas 是无迁移的插件。停用 Harness profile 或移除本项目目录即可回滚，不需要恢复数据库或远程配置。v2.10 preflight、v2.9 guidance、v2.8 event history、v2.7 live observation、v2.6 summary listing 与 v2.5 inspection 不新增持久状态；proposal/event 与既有 patch/export/verification/commit/landing registry 随进程结束丢弃。source landing 只执行显式确认的 local fast-forward，remote 不会被工具访问或更新。孤儿 worktree、landing uncertainty、manual-review 状态或被淘汰的历史事件仍按人工检查和恢复路径处理，工具不会跨 session 自动接管、reset、删除、回滚或重建历史。

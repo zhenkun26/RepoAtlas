@@ -373,6 +373,33 @@ export interface ChangeProposalLiveInspection {
   worktree: ChangeProposalLiveWorktreeObservation
 }
 
+export type ChangeProposalLandingInspectionStatus = 'available' | 'not-applicable' | 'unknown'
+
+export type ChangeProposalLandingRelation =
+  | 'not-applicable'
+  | 'fast-forwardable'
+  | 'already-landed'
+  | 'source-ahead'
+  | 'diverged'
+  | 'source-dirty'
+  | 'source-revision-drift'
+  | 'target-unavailable'
+  | 'unknown'
+
+export interface ChangeProposalLandingAssessment {
+  status: ChangeProposalLandingInspectionStatus
+  relation: ChangeProposalLandingRelation
+  reason: string
+  checkedAt: string
+  sessionOnly: true
+  sourceRevision?: string
+  targetRevision?: string
+  clean?: boolean
+  baseRevisionMatches?: boolean
+  repositoryRootMatches?: boolean
+  workspacePathMatches?: boolean
+}
+
 export type ChangeProposalEventPhase = 'proposal' | 'patch' | 'verification' | 'commit' | 'landing' | 'release'
 
 export interface ChangeProposalEvent {
@@ -629,4 +656,5 @@ export interface ChangeProposalResult {
   commit?: ChangeProposalCommit
   landing?: ChangeProposalLanding
   liveInspection?: ChangeProposalLiveInspection
+  landingAssessment?: ChangeProposalLandingAssessment
 }

@@ -18,8 +18,11 @@ import type {
   ChangeProposalHistoryRequest,
   ChangeProposalHistoryResult,
   ChangeProposalLanding,
+  ChangeProposalLandingAssessment,
   ChangeProposalLandingRequest,
   ChangeProposalLandingExecutionStatus,
+  ChangeProposalLandingRelation,
+  ChangeProposalLandingInspectionStatus,
   ChangeProposalLiveInspection,
   ChangeProposalLiveSourceObservation,
   ChangeProposalLiveWorktreeObservation,
@@ -90,11 +93,19 @@ interface InspectedSourceWorktree {
   dirty: boolean
 }
 
+export interface GitLandingInspection {
+  source: InspectedSourceWorktree
+  targetRevision: string
+  sourceIsAncestor: boolean
+  targetIsAncestor: boolean
+}
+
 export interface GitWorktreeAdapter {
   discover(workspaceRoot: string, signal?: AbortSignal): Promise<RepositoryRevision>
   create(repositoryRoot: string, baseRevision: string, signal?: AbortSignal): Promise<ChangeProposalWorktree>
   inspect(repositoryRoot: string, worktree: ChangeProposalWorktree, signal?: AbortSignal): Promise<InspectedWorktree>
   inspectSource(repositoryRoot: string, sourceWorkspaceRoot: string, signal?: AbortSignal): Promise<InspectedSourceWorktree>
+  inspectLanding(repositoryRoot: string, sourceWorkspaceRoot: string, expectedSourceRevision: string, commitRevision: string, signal?: AbortSignal): Promise<GitLandingInspection>
   applyPatch(repositoryRoot: string, worktree: ChangeProposalWorktree, patchText: string, workspaceRelativeRoot: string, signal?: AbortSignal): Promise<void>
   commit(repositoryRoot: string, worktree: ChangeProposalWorktree, repositoryRelativePaths: readonly string[], commitMessage: string, signal?: AbortSignal): Promise<string>
   land(repositoryRoot: string, sourceWorkspaceRoot: string, expectedSourceRevision: string, commitRevision: string, signal?: AbortSignal): Promise<string>
@@ -208,6 +219,16 @@ class LandingOperationError extends Error {
   }
 }
 
+class LandingInspectionError extends Error {
+  readonly targetUnavailable: boolean
+
+  constructor(message: string, targetUnavailable = false) {
+    super(message)
+    this.name = 'LandingInspectionError'
+    this.targetUnavailable = targetUnavailable
+  }
+}
+
 export interface ChangeProposalManagerOptions {
   adapter?: GitWorktreeAdapter
   limits?: Partial<ChangeProposalLimits>
@@ -292,6 +313,75 @@ export class ChangeProposalManager {
 
     const live = createLiveInspection(source, worktree)
     return resultForWithLive(proposal, live.reason, live)
+  }
+
+  async inspectLanding(proposalId: string, signal?: AbortSignal): Promise<ChangeProposalResult> {
+    const proposal = this.proposals.get(proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal is unknown to the current session')
+    if (!proposal.commit || proposal.commit.status !== 'created' || proposal.commit.executionStatus !== 'commit-created' || !proposal.commit.revision) {
+      const assessment = createLandingAssessment('not-applicable', 'not-applicable', 'landing preflight requires a created local commit with a known revision')
+      return resultForWithLandingAssessment(proposal, assessment.reason, assessment)
+    }
+    if (!isSafeGitRevision(proposal.baseRevision) || !isSafeGitRevision(proposal.commit.revision)) {
+      const assessment = createLandingAssessment('unknown', 'unknown', 'landing preflight revisions are not safe Git revisions')
+      return resultForWithLandingAssessment(proposal, assessment.reason, assessment)
+    }
+    if (signal?.aborted) {
+      const assessment = createLandingAssessment('unknown', 'unknown', 'landing preflight was interrupted before adapter access')
+      return resultForWithLandingAssessment(proposal, assessment.reason, assessment)
+    }
+
+    let inspected: GitLandingInspection
+    try {
+      inspected = await this.adapter.inspectLanding(proposal.repositoryRoot, proposal.workspaceRoot, proposal.baseRevision, proposal.commit.revision, signal)
+    } catch (error) {
+      const relation: ChangeProposalLandingRelation = isTargetUnavailableInspection(error) ? 'target-unavailable' : 'unknown'
+      const assessment = createLandingAssessment('unknown', relation, boundedRedactedText(`landing preflight inspection failed: ${redactError(error)}`, this.limits.maxTextBytes))
+      return resultForWithLandingAssessment(proposal, assessment.reason, assessment)
+    }
+
+    const source = inspected.source
+    const repositoryRootMatches = path.resolve(source.repositoryRoot) === path.resolve(proposal.repositoryRoot)
+    const workspacePathMatches = path.resolve(source.path) === path.resolve(proposal.workspaceRoot)
+    const common = {
+      sourceRevision: source.revision,
+      targetRevision: inspected.targetRevision,
+      clean: !source.dirty,
+      baseRevisionMatches: source.revision === proposal.baseRevision,
+      repositoryRootMatches,
+      workspacePathMatches,
+    }
+    let relation: ChangeProposalLandingRelation
+    let reason: string
+    if (!repositoryRootMatches || !workspacePathMatches) {
+      relation = 'unknown'
+      reason = 'landing preflight could not prove the recorded source repository and workspace identity'
+    } else if (source.dirty) {
+      relation = 'source-dirty'
+      reason = 'source workspace is dirty; landing was not performed'
+    } else if (source.revision === inspected.targetRevision) {
+      relation = 'already-landed'
+      reason = 'source workspace is already at the session-created commit; landing was not performed'
+    } else if (inspected.targetIsAncestor) {
+      relation = 'source-ahead'
+      reason = source.revision === proposal.baseRevision
+        ? 'source workspace is ahead of the session-created commit; landing was not performed'
+        : 'source workspace is ahead of the session-created commit and has drifted from the proposal base; landing was not performed'
+    } else if (source.revision !== proposal.baseRevision) {
+      relation = 'source-revision-drift'
+      reason = 'source workspace revision differs from the proposal base; landing was not performed'
+    } else if (inspected.sourceIsAncestor) {
+      relation = 'fast-forwardable'
+      reason = 'source workspace is a clean ancestor of the session-created commit; landing was not performed'
+    } else {
+      relation = 'diverged'
+      reason = 'source workspace and the session-created commit have diverged; landing was not performed'
+    }
+    const assessment = {
+      ...createLandingAssessment('available', relation, reason),
+      ...common,
+    }
+    return resultForWithLandingAssessment(proposal, assessment.reason, assessment)
   }
 
   list(request: ChangeProposalListRequest = {}): ChangeProposalListResult {
@@ -1012,6 +1102,24 @@ export function createNodeGitWorktreeAdapter(): GitWorktreeAdapter {
       const status = await runGit(['-C', canonicalWorkspace, 'status', '--porcelain', '--untracked-files=all'], canonicalWorkspace, signal)
       return { path: canonicalWorkspace, repositoryRoot: discoveredRoot, revision, dirty: status.length > 0 }
     },
+    async inspectLanding(repositoryRoot, sourceWorkspaceRoot, expectedSourceRevision, commitRevision, signal) {
+      if (!isSafeGitRevision(expectedSourceRevision) || !isSafeGitRevision(commitRevision)) throw new LandingInspectionError('source or target revision is not a safe Git revision')
+      const source = await this.inspectSource(repositoryRoot, sourceWorkspaceRoot, signal)
+      let targetRevision: string
+      try {
+        targetRevision = await runGit(['-C', source.path, 'rev-parse', '--verify', `${commitRevision}^{commit}`], source.path, signal)
+        if (targetRevision !== commitRevision) throw new Error('target commit revision could not be resolved exactly')
+      } catch (error) {
+        throw new LandingInspectionError(`target commit is not locally resolvable: ${redactError(error)}`, true)
+      }
+      try {
+        const sourceIsAncestor = await isGitAncestor(source.path, source.revision, targetRevision, signal)
+        const targetIsAncestor = await isGitAncestor(source.path, targetRevision, source.revision, signal)
+        return { source, targetRevision, sourceIsAncestor, targetIsAncestor }
+      } catch (error) {
+        throw new LandingInspectionError(`local commit ancestry could not be inspected: ${redactError(error)}`)
+      }
+    },
     async applyPatch(_repositoryRoot, worktree, patchText, workspaceRelativeRoot, signal) {
       const patchCwd = path.resolve(worktree.path, workspaceRelativeRoot || '.')
       if (!isWithin(worktree.path, patchCwd)) throw new Error('patch working directory is outside the managed worktree')
@@ -1186,6 +1294,24 @@ async function runGit(args: readonly string[], cwd: string, signal?: AbortSignal
     signal,
   })
   return result.stdout.trim()
+}
+
+async function isGitAncestor(cwd: string, ancestor: string, descendant: string, signal?: AbortSignal): Promise<boolean> {
+  try {
+    await execFileAsync('git', ['-C', cwd, 'merge-base', '--is-ancestor', ancestor, descendant], {
+      cwd,
+      shell: false,
+      windowsHide: true,
+      timeout: 15_000,
+      maxBuffer: 128 * 1024,
+      signal,
+    })
+    return true
+  } catch (error) {
+    const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined
+    if (code === 1) return false
+    throw error
+  }
 }
 
 function runGitWithInput(args: readonly string[], cwd: string, input: string, signal?: AbortSignal): Promise<string> {
@@ -1471,6 +1597,31 @@ function resultForWithLanding(proposal: ChangeProposal, reason: string, landing:
 
 function resultForWithLive(proposal: ChangeProposal, reason: string, liveInspection: ChangeProposalLiveInspection): ChangeProposalResult {
   return { ...resultFor(proposal, reason), liveInspection }
+}
+
+function resultForWithLandingAssessment(proposal: ChangeProposal, reason: string, landingAssessment: ChangeProposalLandingAssessment): ChangeProposalResult {
+  return { ...resultFor(proposal, reason), landingAssessment: { ...landingAssessment } }
+}
+
+function createLandingAssessment(
+  status: ChangeProposalLandingInspectionStatus,
+  relation: ChangeProposalLandingRelation,
+  reason: string,
+): ChangeProposalLandingAssessment {
+  return {
+    status,
+    relation,
+    reason,
+    checkedAt: new Date().toISOString(),
+    sessionOnly: true,
+  }
+}
+
+function isTargetUnavailableInspection(error: unknown): boolean {
+  if (error instanceof LandingInspectionError) return error.targetUnavailable
+  if (!error || typeof error !== 'object') return false
+  return (error as { name?: unknown; targetUnavailable?: unknown }).name === 'LandingInspectionError'
+    && (error as { targetUnavailable?: unknown }).targetUnavailable === true
 }
 
 function createLiveInspection(
