@@ -13,4 +13,4 @@ pnpm dsh web
 
 然后在 Web UI 的“设置 → 插件 → 插件列表”中应看到 `repo-atlas/harness` 为“已挂载、已启用”。未确认的 GoalSpec 仍只返回澄清问题，不启动扫描；受控动作还需要 active+armed Goal 和一次性用户审批。插件没有声明自由 Shell、网络、安装、写入或 Git 工具。
 
-环境适配反馈：官方 Web profile 的 `bash-sandbox` 和 permission preset 依赖 `sandbox` 能力。直接禁用 `sandbox` 会让 profile 在启动阶段保持 pending 并 fail closed，无法进入可执行 session；因此“缺少 sandbox 时受控动作返回 `sandbox-unavailable`”已在 RepoAtlas runtime/plugin 边界测试覆盖，真实 Web 端需 Harness 提供可启动的最小无 sandbox 组合后再补验。
+环境适配反馈：官方 Web profile 的 `bash-sandbox` 和 permission preset 依赖 `sandbox` 能力。只禁用 `sandbox` 会让依赖链在启动阶段保持 pending 并 fail closed，无法进入可执行 session；这属于 Harness 组合适配限制，而不是 RepoAtlas 动作逻辑应绕过的安全边界。验收时采用了隔离的最小无 shell 组合：同时停用 `sandbox`、`bash-sandbox`、`permission`、`tool-bash`，保留 `subprocess`、`sandbox-policy`、`approval`，并挂载只含 persona 与 Goal 工具的自定义 agent preset。该组合可以启动真实 Web session；在 active+armed Goal 和 `allowed-once` 审批后，动作返回 `sandbox-unavailable` 且 stdout 为空，保持 fail-closed、未进入 spawn。默认 profile 未修改。

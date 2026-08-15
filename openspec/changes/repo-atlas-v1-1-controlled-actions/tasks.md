@@ -17,5 +17,5 @@
 ## 4. 测试、文档与验收
 
 - [x] 4.1 增加 recipe 校验、越界 cwd、Shell 形状输入、未确认、沙箱不可用、超时、输出截断和非零退出测试。 <!-- PASS: 26/26 unit tests cover policy, runtime and plugin approval boundaries. -->
-- [ ] 4.2 在真实 Harness Web UI session 中验证动作工具加载、无 sandbox 时故障关闭，以及一个显式批准的受控 recipe。 <!-- PARTIAL: 应用内目录选择、tool 加载、allowed-once、tool/result 与 auditId 已在真实 Web session PASS；禁用官方 sandbox 会使 bash-sandbox/permission-preset 依赖链 pending，Web profile 无法启动，no-sandbox 仍由 runtime 单测覆盖。 -->
-- [ ] 4.3 更新 v1.1 使用、安全边界和限制文档，运行 typecheck、lint、unit tests、OpenSpec validate 和 Harness 集成验证。 <!-- PARTIAL: 文档、本地门禁和标准 sandbox Web 集成 PASS；no-sandbox Web 环境验证因 Harness 组合依赖而 BLOCKED，保持未勾选。 -->
+- [x] 4.2 在真实 Harness Web UI session 中验证动作工具加载、无 sandbox 时故障关闭，以及一个显式批准的受控 recipe。 <!-- PASS: 标准 Web session 完成 allowed-once 后以 read-only/full enforcement 成功执行 node-version；隔离 no-sandbox Web 通过自定义无 shell preset 启动，批准后返回 sandbox-unavailable、stdout 为空，未进入 spawn。 -->
+- [x] 4.3 更新 v1.1 使用、安全边界和限制文档，运行 typecheck、lint、unit tests、OpenSpec validate 和 Harness 集成验证。 <!-- PASS: 文档、本地门禁、标准 sandbox Web 与 no-sandbox fail-closed Web 验收均完成；官方 standard preset 不能直接停用 sandbox 的限制已记录。 -->
