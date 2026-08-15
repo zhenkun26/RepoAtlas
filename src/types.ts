@@ -400,6 +400,26 @@ export interface ChangeProposalLandingAssessment {
   workspacePathMatches?: boolean
 }
 
+export type ChangeProposalReleaseInspectionStatus = 'available' | 'not-applicable' | 'unknown'
+
+export type ChangeProposalReleaseRelation =
+  | 'not-applicable'
+  | 'ready'
+  | 'proposal-state-blocked'
+  | 'worktree-dirty'
+  | 'identity-mismatch'
+  | 'unknown'
+
+export interface ChangeProposalReleaseAssessment {
+  status: ChangeProposalReleaseInspectionStatus
+  relation: ChangeProposalReleaseRelation
+  reason: string
+  checkedAt: string
+  sessionOnly: true
+  clean?: boolean
+  identityMatches?: boolean
+}
+
 export type ChangeProposalEventPhase = 'proposal' | 'patch' | 'verification' | 'commit' | 'landing' | 'release'
 
 export interface ChangeProposalEvent {
@@ -657,4 +677,5 @@ export interface ChangeProposalResult {
   landing?: ChangeProposalLanding
   liveInspection?: ChangeProposalLiveInspection
   landingAssessment?: ChangeProposalLandingAssessment
+  releaseAssessment?: ChangeProposalReleaseAssessment
 }

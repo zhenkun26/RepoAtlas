@@ -4,6 +4,15 @@
   "private": true,
   "type": "module",
   "description": "RepoAtlas / 代码星图：DeepSeek Harness 的安全只读代码库分析插件核心。",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zhenkun26/RepoAtlas.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zhenkun26/RepoAtlas/issues"
+  },
+  "homepage": "https://github.com/zhenkun26/RepoAtlas#readme",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
@@ -19,7 +28,7 @@
     "demo": "node --experimental-strip-types examples/demo.ts",
     "typecheck": "node scripts/typecheck.mjs",
     "lint": "node scripts/lint.mjs",
-    "validate:openspec": "openspec validate --specs --strict --no-interactive",
+    "validate:openspec": "openspec validate --all --strict --no-interactive",
     "validate:openspec:change": "openspec validate --strict --no-interactive"
   },
   "engines": {

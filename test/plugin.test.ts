@@ -41,6 +41,7 @@ test('Harness adapter registers read-only analysis and session-only proposal too
   assert.match(JSON.stringify(proposal.parameters), /inspect-recovery/)
   assert.match(JSON.stringify(proposal.parameters), /inspect-live/)
   assert.match(JSON.stringify(proposal.parameters), /inspect-landing/)
+  assert.match(JSON.stringify(proposal.parameters), /inspect-release/)
   assert.match(JSON.stringify(proposal.parameters), /limit/)
   assert.deepEqual(analysis.output.schema, { type: 'object' })
   assert.match(analysis.output.render({}, { policy: 'readonly' })[0]?.text ?? '', /"policy": "readonly"/)
@@ -126,6 +127,16 @@ test('Harness adapter registers read-only analysis and session-only proposal too
   const unknownLanding = await proposal.execute({ action: 'inspect-landing', proposalId: 'proposal-unknown' }) as { status: string; landingAssessment?: unknown }
   assert.equal(unknownLanding.status, 'blocked')
   assert.equal(unknownLanding.landingAssessment, undefined)
+  const release = await proposal.execute({ action: 'inspect-release', proposalId: prepared.proposal?.proposalId }) as { status: string; releaseAssessment?: { status: string; relation: string } }
+  assert.equal(release.status, 'awaiting-confirmation')
+  assert.equal(release.releaseAssessment?.status, 'not-applicable')
+  assert.equal(release.releaseAssessment?.relation, 'not-applicable')
+  const missingRelease = await proposal.execute({ action: 'inspect-release' }) as { status: string; operationStatus: string }
+  assert.equal(missingRelease.status, 'blocked')
+  assert.equal(missingRelease.operationStatus, 'blocked')
+  const unknownRelease = await proposal.execute({ action: 'inspect-release', proposalId: 'proposal-unknown' }) as { status: string; releaseAssessment?: unknown }
+  assert.equal(unknownRelease.status, 'blocked')
+  assert.equal(unknownRelease.releaseAssessment, undefined)
   const clarification = await analysis.execute({}) as { clarification?: { question?: { field?: string } } }
   assert.equal(clarification.clarification?.question?.field, 'intent')
   assert.ok(logs.some((message) => message.includes('read-only')))

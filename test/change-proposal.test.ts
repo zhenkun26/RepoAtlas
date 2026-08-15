@@ -38,6 +38,7 @@ class FakeGitAdapter implements GitWorktreeAdapter {
   failLanding = false
   failLandingPostcondition = false
   failSourceInspection = false
+  failWorktreeInspection = false
   failCommitPostcondition = false
   failPostcondition = false
   identityMismatch = false
@@ -54,6 +55,7 @@ class FakeGitAdapter implements GitWorktreeAdapter {
 
   async inspect(_repositoryRoot: string, worktree: ChangeProposalWorktree): Promise<ChangeProposalWorktree & { dirty: boolean; changedPaths: string[] }> {
     this.inspectCount += 1
+    if (this.failWorktreeInspection) throw new Error('worktree inspection unavailable')
     if ((this.failPostcondition && this.applyPatchCount > 0) || (this.failCommitPostcondition && this.commitCount > 0)) throw new Error('postcondition inspection unavailable')
     return { ...worktree, baseRevision: this.commitCount > 0 ? this.commitRevision : worktree.baseRevision, identity: this.identityMismatch ? 'identity-mismatch' : worktree.identity, dirty: this.dirty, changedPaths: [...this.changedPaths] }
   }
@@ -748,6 +750,97 @@ test('landing preflight reports local relations without landing or lifecycle mut
   const missing = await manager.inspectLanding('proposal-unknown')
   assert.equal(missing.status, 'blocked')
   assert.equal(missing.landingAssessment, undefined)
+})
+
+test('release readiness reports bounded worktree facts without release or lifecycle mutation', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+  const pending = await manager.prepare(request())
+  const proposalId = pending.proposal?.proposalId ?? ''
+
+  const notApplicable = await manager.inspectRelease(proposalId)
+  assert.equal(notApplicable.releaseAssessment?.status, 'not-applicable')
+  assert.equal(notApplicable.releaseAssessment?.relation, 'not-applicable')
+  assert.equal(adapter.inspectCount, 0)
+
+  const missing = await manager.inspectRelease('proposal-unknown')
+  assert.equal(missing.status, 'blocked')
+  assert.equal(missing.releaseAssessment, undefined)
+  assert.equal(adapter.inspectCount, 0)
+
+  const confirmed = await manager.confirm(proposalId, pending.proposal?.confirmationDigest ?? '')
+  const beforeHistory = manager.history({ proposalId }).total
+  const ready = await manager.inspectRelease(proposalId)
+  assert.equal(ready.status, 'confirmed')
+  assert.equal(ready.releaseAssessment?.status, 'available')
+  assert.equal(ready.releaseAssessment?.relation, 'ready')
+  assert.equal(ready.releaseAssessment?.clean, true)
+  assert.equal(ready.releaseAssessment?.identityMatches, true)
+  assert.match(ready.releaseAssessment?.reason ?? '', /release was not performed/)
+  assert.equal(JSON.stringify(ready.releaseAssessment).includes(fixtureRoot), false)
+  assert.equal(adapter.inspectCount, 1)
+  assert.equal(adapter.removeCount, 0)
+  assert.equal(adapter.landCount, 0)
+  assert.equal(adapter.inspectSourceCount, 0)
+
+  if (!ready.releaseAssessment) throw new Error('release assessment should be present')
+  ready.releaseAssessment.relation = 'worktree-dirty'
+  const repeated = await manager.inspectRelease(proposalId)
+  assert.equal(repeated.releaseAssessment?.relation, 'ready')
+  assert.equal(manager.history({ proposalId }).total, beforeHistory)
+
+  adapter.dirty = true
+  const dirty = await manager.inspectRelease(proposalId)
+  assert.equal(dirty.releaseAssessment?.relation, 'worktree-dirty')
+  assert.equal(dirty.releaseAssessment?.clean, false)
+  assert.equal(dirty.releaseAssessment?.identityMatches, true)
+  adapter.dirty = false
+
+  adapter.identityMismatch = true
+  const mismatched = await manager.inspectRelease(proposalId)
+  assert.equal(mismatched.releaseAssessment?.relation, 'identity-mismatch')
+  assert.equal(mismatched.releaseAssessment?.identityMatches, false)
+  adapter.identityMismatch = false
+
+  const released = await manager.release(proposalId)
+  assert.equal(released.status, 'released')
+  assert.equal(adapter.inspectCount, 5)
+  const beforeBlockedInspect = adapter.inspectCount
+  const blockedState = await manager.inspectRelease(proposalId)
+  assert.equal(blockedState.releaseAssessment?.status, 'available')
+  assert.equal(blockedState.releaseAssessment?.relation, 'proposal-state-blocked')
+  assert.equal(adapter.inspectCount, beforeBlockedInspect)
+  assert.equal(adapter.removeCount, 1)
+
+  const failedAdapter = new FakeGitAdapter()
+  const failedManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: failedAdapter })
+  failedManager.registerSession(createSession())
+  const failedPending = await failedManager.prepare(request())
+  const failedId = failedPending.proposal?.proposalId ?? ''
+  await failedManager.confirm(failedId, failedPending.proposal?.confirmationDigest ?? '')
+  failedAdapter.failWorktreeInspection = true
+  const beforeFailedHistory = failedManager.history({ proposalId: failedId }).total
+  const failed = await failedManager.inspectRelease(failedId)
+  assert.equal(failed.releaseAssessment?.status, 'unknown')
+  assert.equal(failed.releaseAssessment?.relation, 'unknown')
+  assert.equal(failedManager.history({ proposalId: failedId }).total, beforeFailedHistory)
+  assert.equal(failedAdapter.removeCount, 0)
+
+  const abortedAdapter = new FakeGitAdapter()
+  const abortedManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: abortedAdapter })
+  abortedManager.registerSession(createSession())
+  const abortedPending = await abortedManager.prepare(request())
+  const abortedId = abortedPending.proposal?.proposalId ?? ''
+  await abortedManager.confirm(abortedId, abortedPending.proposal?.confirmationDigest ?? '')
+  const controller = new AbortController()
+  controller.abort()
+  const beforeAbortInspect = abortedAdapter.inspectCount
+  const interrupted = await abortedManager.inspectRelease(abortedId, controller.signal)
+  assert.equal(interrupted.releaseAssessment?.status, 'unknown')
+  assert.equal(interrupted.releaseAssessment?.relation, 'unknown')
+  assert.equal(abortedAdapter.inspectCount, beforeAbortInspect)
+  assert.equal(abortedAdapter.removeCount, 0)
 })
 
 test('proposal validation preserves safe partial targets and bounded evidence', async () => {

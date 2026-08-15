@@ -23,6 +23,8 @@ import type {
   ChangeProposalLandingExecutionStatus,
   ChangeProposalLandingRelation,
   ChangeProposalLandingInspectionStatus,
+  ChangeProposalReleaseAssessment,
+  ChangeProposalReleaseRelation,
   ChangeProposalLiveInspection,
   ChangeProposalLiveSourceObservation,
   ChangeProposalLiveWorktreeObservation,
@@ -382,6 +384,51 @@ export class ChangeProposalManager {
       ...common,
     }
     return resultForWithLandingAssessment(proposal, assessment.reason, assessment)
+  }
+
+  async inspectRelease(proposalId: string, signal?: AbortSignal): Promise<ChangeProposalResult> {
+    const proposal = this.proposals.get(proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal is unknown to the current session')
+    if (!proposal.worktree) {
+      const assessment = createReleaseAssessment('not-applicable', 'not-applicable', 'release readiness requires a session-owned worktree')
+      return resultForWithReleaseAssessment(proposal, assessment.reason, assessment)
+    }
+    if (proposal.status !== 'confirmed') {
+      const assessment = createReleaseAssessment('available', 'proposal-state-blocked', 'release readiness is blocked because the proposal is not in the confirmed state')
+      return resultForWithReleaseAssessment(proposal, assessment.reason, assessment)
+    }
+    if (signal?.aborted) {
+      const assessment = createReleaseAssessment('unknown', 'unknown', 'release readiness inspection was interrupted before adapter access')
+      return resultForWithReleaseAssessment(proposal, assessment.reason, assessment)
+    }
+
+    let inspected: InspectedWorktree
+    try {
+      inspected = await this.adapter.inspect(proposal.repositoryRoot, proposal.worktree, signal)
+    } catch (error) {
+      const assessment = createReleaseAssessment('unknown', 'unknown', boundedRedactedText(`release readiness inspection failed: ${redactError(error)}`, this.limits.maxTextBytes))
+      return resultForWithReleaseAssessment(proposal, assessment.reason, assessment)
+    }
+
+    const identityMatches = inspected.identity === proposal.worktree.identity
+    const common = { clean: !inspected.dirty, identityMatches }
+    let relation: ChangeProposalReleaseRelation
+    let reason: string
+    if (!identityMatches) {
+      relation = 'identity-mismatch'
+      reason = 'managed worktree identity no longer matches the session-owned worktree; release was not performed'
+    } else if (inspected.dirty) {
+      relation = 'worktree-dirty'
+      reason = 'session-owned worktree is dirty; release was not performed'
+    } else {
+      relation = 'ready'
+      reason = 'session-owned worktree is clean and identity-matched; release was not performed'
+    }
+    const assessment = {
+      ...createReleaseAssessment('available', relation, reason),
+      ...common,
+    }
+    return resultForWithReleaseAssessment(proposal, assessment.reason, assessment)
   }
 
   list(request: ChangeProposalListRequest = {}): ChangeProposalListResult {
@@ -1603,11 +1650,29 @@ function resultForWithLandingAssessment(proposal: ChangeProposal, reason: string
   return { ...resultFor(proposal, reason), landingAssessment: { ...landingAssessment } }
 }
 
+function resultForWithReleaseAssessment(proposal: ChangeProposal, reason: string, releaseAssessment: ChangeProposalReleaseAssessment): ChangeProposalResult {
+  return { ...resultFor(proposal, reason), releaseAssessment: { ...releaseAssessment } }
+}
+
 function createLandingAssessment(
   status: ChangeProposalLandingInspectionStatus,
   relation: ChangeProposalLandingRelation,
   reason: string,
 ): ChangeProposalLandingAssessment {
+  return {
+    status,
+    relation,
+    reason,
+    checkedAt: new Date().toISOString(),
+    sessionOnly: true,
+  }
+}
+
+function createReleaseAssessment(
+  status: ChangeProposalReleaseAssessment['status'],
+  relation: ChangeProposalReleaseRelation,
+  reason: string,
+): ChangeProposalReleaseAssessment {
   return {
     status,
     relation,

@@ -84,6 +84,18 @@ adapter 只执行固定、shell=false 的本地 Git inspection：source reposito
 
 inspect-landing 不调用 `commit`、`land`、`remove`、patch、approval、Goal、sandbox 或 subprocess mutation，不写 source/index/worktree/磁盘，不联网、不持久化、不追加 lifecycle event。结果是 bounded、detached、session-only observation，assessment 不返回 absolute path、patch text、digest、command 或 approval data；后续实际 landing 必须重新执行既有 digest、Goal、approval、clean source 和 exact-base 检查。
 
+## v2.11 read-only release readiness
+
+v2.11 的 `inspect-release` 只接受当前 session 中的 `proposalId`，并从 registry 派生 proposal state、session-owned worktree 和 recorded identity。没有 managed worktree 时返回 `not-applicable`；保留 worktree 但 proposal 不是 `confirmed` 时返回 `proposal-state-blocked`。confirmed proposal 才会进行现有固定 worktree inspection，并区分 `ready`、`worktree-dirty`、`identity-mismatch` 和 `unknown`。
+
+`ready` 只表示 inspection 当时观察到 clean 且 identity 匹配，不是 release authorization、approval 或 cleanup 完成。dirty、identity mismatch、inspection failure 和 abort 都 fail closed；现有 `release` action 仍必须在真正 remove 前重新检查事实。inspect-release 只调用 read-only `inspect`，不调用 `remove`、`land`、`commit`、patch，不请求 Harness approval、Goal、sandbox 或 subprocess capability，也不执行任意命令；不追加 lifecycle event，不写 workspace/index/worktree/磁盘，不联网、不持久化。assessment 是 bounded、detached、session-only，不返回 absolute path、changed path name、patch text、digest、command 或 approval data。
+
+## v2.12 public-release baseline
+
+v2.12 的开源化工作只建立仓库交付边界：根目录许可证、贡献/行为/安全/变更文档、源码优先的 Harness bundle 安装说明和 CI 质量门禁。它不改变 RepoAtlas 运行时权限，不新增网络、Shell、持久化、跨 session、source workspace 写入或 remote Git 能力；CI 中下载 OpenSpec CLI 只发生在 disposable runner，不代表插件运行时获得网络访问。
+
+在 distribution decision 完成前，`package.json` 保持 `private: true`，仓库不宣称 npm 包、`dist/` 编译产物、真实 Harness CI 集成、tag/release 或 support SLA。许可证持有人确认、clean-clone/packed-install、真实 Harness smoke test 和首个公开 release 都是后续独立审阅项。
+
 ## 路径与文件
 
 - workspace 根目录先规范化；包含 `..` 的请求直接拒绝。
@@ -108,4 +120,4 @@ AST 只处理已确认 scope 内的 `.ts`、`.tsx`、`.js`、`.jsx` 脱敏文本
 
 ## 回滚
 
-RepoAtlas 是无迁移的插件。停用 Harness profile 或移除本项目目录即可回滚，不需要恢复数据库或远程配置。v2.10 preflight、v2.9 guidance、v2.8 event history、v2.7 live observation、v2.6 summary listing 与 v2.5 inspection 不新增持久状态；proposal/event 与既有 patch/export/verification/commit/landing registry 随进程结束丢弃。source landing 只执行显式确认的 local fast-forward，remote 不会被工具访问或更新。孤儿 worktree、landing uncertainty、manual-review 状态或被淘汰的历史事件仍按人工检查和恢复路径处理，工具不会跨 session 自动接管、reset、删除、回滚或重建历史。
+RepoAtlas 是无迁移的插件。停用 Harness profile 或移除本项目目录即可回滚，不需要恢复数据库或远程配置。v2.11 readiness、v2.10 preflight、v2.9 guidance、v2.8 event history、v2.7 live observation、v2.6 summary listing 与 v2.5 inspection 不新增持久状态；proposal/event 与既有 patch/export/verification/commit/landing registry 随进程结束丢弃。source landing 只执行显式确认的 local fast-forward，remote 不会被工具访问或更新。孤儿 worktree、landing uncertainty、manual-review 状态或被淘汰的历史事件仍按人工检查和恢复路径处理，工具不会跨 session 自动接管、reset、删除、回滚或重建历史。
