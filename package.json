@@ -19,7 +19,7 @@
     "demo": "node --experimental-strip-types examples/demo.ts",
     "typecheck": "node scripts/typecheck.mjs",
     "lint": "node scripts/lint.mjs",
-    "validate:openspec": "openspec validate repo-atlas-v1-2-incremental-evidence --strict --no-interactive"
+    "validate:openspec": "openspec validate --specs --strict --no-interactive"
   },
   "engines": {
     "node": ">=22"
