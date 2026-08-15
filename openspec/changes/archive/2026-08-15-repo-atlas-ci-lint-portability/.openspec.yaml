@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-08-15
+goal: Make the repository safety lint portable on clean GitHub Actions runners without changing its checks

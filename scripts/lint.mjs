@@ -1,7 +1,18 @@
-import { execFileSync } from 'node:child_process'
+import { readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
-const files = execFileSync('rg', ['--files', 'src'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean)
+const files = []
+function collectFiles(directory) {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) collectFiles(path)
+    else if (entry.isFile()) files.push(path)
+  }
+}
+collectFiles('src')
+files.sort()
+
 const forbidden = /(?:from\s+['"]node:child_process|import\s+.*child_process|\b(?:exec|fetch|rmSync|unlink|rename)\s*\(|https?:\/\/)/
 const capabilitySpawn = /\bspawn\s*\(/g
 const violations = []
