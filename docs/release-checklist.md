@@ -10,7 +10,7 @@ This checklist describes release readiness; it is not an instruction to publish,
 - [x] CI covers Node.js 22 and 24 with `npm ci`, tests, lint, typecheck, strict OpenSpec validation, and `git diff --check`.
 - [x] Project owner approved MIT as the license choice; preserve the MIT notice and disclaimer.
 - [x] Public references and integrations are required to identify RepoAtlas / 代码星图 and link the source repository; see [NOTICE](../NOTICE.md).
-- [ ] Confirm the named copyright holder before the first public release.
+- [x] Confirm the named copyright holder before the first public release.
 
 ## Runtime and integration evidence
 
