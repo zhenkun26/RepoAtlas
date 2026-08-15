@@ -74,7 +74,7 @@ export class RepositoryScanner {
     }
   }
 
-  async search(query: string, relativePaths?: string[], signal?: AbortSignal): Promise<Array<{ path: string; line: number; text: string }>> {
+  async search(query: string, relativePaths?: string[], signal?: AbortSignal, providedText?: ReadonlyMap<string, string>, observedText?: Map<string, string>, readPaths?: Set<string>): Promise<Array<{ path: string; line: number; text: string }>> {
     const decision = this.beginAction('search', relativePaths?.[0] ?? '.')
     if (!decision.allowed) return []
     const pattern = new RegExp(query, 'i')
@@ -82,19 +82,27 @@ export class RepositoryScanner {
     const matches: Array<{ path: string; line: number; text: string }> = []
     for (const candidate of paths) {
       if (signal?.aborted) break
-      const read = await this.readText(candidate, signal)
-      if (!read.text) continue
-      read.text.split('\n').forEach((line, index) => {
-        if (pattern.test(line)) matches.push({ path: read.relativePath, line: index + 1, text: line.slice(0, 500) })
+      let text: string | undefined
+      if (providedText?.has(candidate)) {
+        text = providedText.get(candidate)
+      } else {
+        const read = await this.readText(candidate, signal)
+        readPaths?.add(candidate)
+        text = read.text
+        if (text !== undefined) observedText?.set(candidate, text)
+      }
+      if (!text) continue
+      text.split('\n').forEach((line, index) => {
+        if (pattern.test(line)) matches.push({ path: candidate, line: index + 1, text: line.slice(0, 500) })
       })
     }
     return matches
   }
 
-  async parseConfig(relativePath: string, signal?: AbortSignal): Promise<{ path: string; format: string; values: Record<string, unknown>; status: string }> {
+  async parseConfig(relativePath: string, signal?: AbortSignal, providedText?: string): Promise<{ path: string; format: string; values: Record<string, unknown>; status: string }> {
     const decision = this.beginAction('parse-config', relativePath)
     if (!decision.allowed) return { path: relativePath, format: 'unknown', values: {}, status: 'safety-skipped' }
-    const read = await this.readText(relativePath, signal)
+    const read = providedText === undefined ? await this.readText(relativePath, signal) : { text: providedText, status: 'confirmed' as const }
     if (!read.text) return { path: relativePath, format: 'unknown', values: {}, status: read.status }
     const extension = path.extname(relativePath).toLowerCase()
     try {

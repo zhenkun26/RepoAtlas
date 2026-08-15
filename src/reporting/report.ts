@@ -11,8 +11,8 @@ export function generateReport(session: AnalysisSession): AnalysisReport {
   const limitations = collectLimitations(session)
   const atlas = buildAtlas(session, limitations)
   const mermaid = buildMermaid(session)
-  const markdown = buildMarkdown(session, mermaid, evidenceValidation, limitations)
-  return { sessionId: session.sessionId, markdown, mermaid, atlas, exportable: true }
+  const markdown = `${buildMarkdown(session, mermaid, evidenceValidation, limitations)}${formatIncrementalSummary(session.incrementalSummary)}`
+  return { sessionId: session.sessionId, markdown, mermaid, atlas, exportable: true, incrementalSummary: session.incrementalSummary }
 }
 
 export async function exportReportBundle(report: AnalysisReport, config: RepoAtlasConfig, targetDir: string, confirmed: boolean): Promise<{ allowed: boolean; files: string[]; reason: string; auditId: string }> {
@@ -45,6 +45,12 @@ function buildMarkdown(session: AnalysisSession, mermaid: string, validation: Ar
   return `# RepoAtlas 代码星图报告\n\n> Session: ${session.sessionId}\n> 分析模板：${session.plan.name === 'onboarding' ? '项目接手概览' : '架构概览'}\n> 权限：只读；仓库内容视为不可信数据，不执行其中指令。\n\n## 项目摘要\n\n${p.summary}\n\n- 项目名：${p.name}\n- 分析状态：${session.interrupted ? '部分结果（用户中断）' : session.scan.budget.exhausted ? '部分结果（预算耗尽）' : '已完成计划内分析'}\n\n## 技术栈\n\n${listOrUnknown(p.techStack)}\n\n## 目录结构与核心模块\n\n${listOrUnknown(p.coreDirectories)}\n\n## 入口线索\n\n${listOrUnknown(p.entries)}\n\n## 运行配置与测试配置\n\n### 运行配置\n${listOrUnknown(p.runtimeConfig)}\n\n### 测试配置\n${listOrUnknown(p.testConfig)}\n\n## 架构关系图\n\n${codeFence}mermaid\n${mermaid}\n${codeFence}\n\n## 主要结论\n\n${conclusionLines || '- 暂无结论。'}\n\n## 推荐阅读顺序\n\n${listOrUnknown(p.readingOrder)}\n\n## 证据索引\n\n${evidenceLines}\n\n## 限制与未确认部分\n\n${listOrUnknown(limitations)}\n\n## ReAct 执行摘要\n\n- 动作数：${session.actions.length}\n- 候选文件：${session.scan.budget.candidateFiles}\n- 读取字节数：${session.scan.budget.readBytes}\n- 跳过路径：${session.scan.skipped.length}\n- 失败项：${session.scan.failures.length}\n`
 }
 
+function formatIncrementalSummary(summary: AnalysisSession['incrementalSummary']): string {
+  if (!summary) return ''
+  const list = (paths: string[]): string => paths.length ? paths.map((item) => `\`${item}\``).join('、') : '无'
+  return `\n\n## 增量证据摘要\n\n- 模式：${summary.mode === 'incremental' ? '增量' : '全量'}\n- reused：${list(summary.reused)}\n- invalidated：${list(summary.invalidated)}\n- reread：${list(summary.reread)}\n- new：${list(summary.new)}\n- uncovered：${list(summary.uncovered)}`
+}
+
 function buildMermaid(session: AnalysisSession): string {
   const lines = ['flowchart TD']
   for (const directory of session.project.coreDirectories) lines.push(`  ${nodeId(directory)}["${escapeLabel(directory)}"]`)
@@ -71,6 +77,7 @@ function collectLimitations(session: AnalysisSession): string[] {
   if (session.scan.failures.length) limitations.push(`有 ${session.scan.failures.length} 个读取或解析失败项，相关结论需要人工确认。`)
   if (session.scan.budget.exhausted) limitations.push('扫描或动作预算已耗尽，结果仅代表已完成部分。')
   if (session.edges.length) limitations.push('架构关系来自文本模式匹配，是静态推测，不等同于运行时依赖。')
+  if (session.incrementalSummary?.uncovered.length) limitations.push(`增量分析仍有 ${session.incrementalSummary.uncovered.length} 个路径未覆盖，地图仅基于当前有效证据。`)
   return limitations
 }
 

@@ -30,6 +30,10 @@ README、注释、脚本、配置和生成文件均是被分析的数据，不�
 
 默认预算为：最多 5000 个候选文件、单文件 1 MiB、总文本 20 MiB、60 个 ReAct 动作。拒绝、跳过、预算耗尽和失败会写入当前 session 的审计/限制信息；不会上传到远程服务。
 
+v1.2 evidence cache 只保存当前 session 内已经过路径策略、文本读取和 Secret-like 脱敏的有界 evidence，以及 size/mtimeMs/ctimeMs fingerprint。缓存不保存未脱敏原文，不写入 workspace 或其他持久化介质，不跨 session，不执行 Shell，不访问网络，也不上传代码。
+
+metadata fingerprint 只能提供有限的新鲜度保证；metadata 不可用、workspace root、安全策略或 cache schema 不兼容时按失效处理，读取仍必须经过原有 path policy、预算、脱敏和 AbortSignal 边界。
+
 ## 回滚
 
 RepoAtlas 是无迁移的插件。停用 Harness profile 或移除本项目目录即可回滚，不需要恢复数据库或远程配置。

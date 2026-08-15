@@ -7,7 +7,5 @@ export async function refineAndAnalyze(session: AnalysisSession, patch: Partial<
   const goal = patch.confirmed ? confirmGoal(draft) : draft
   if (!goal.confirmed) throw new Error('Refined GoalSpec requires confirmation before analysis')
   const scope = goal.scope?.filter(Boolean)
-  const fresh = await analyzeRepository(goal, session.workspaceRoot, { ...overrides, scope }, signal, session.evidence)
-  fresh.evidence = [...new Map([...session.evidence, ...fresh.evidence].map((item) => [item.evidenceId, item])).values()]
-  return fresh
+  return analyzeRepository(goal, session.workspaceRoot, { ...overrides, scope }, signal, session.evidence, session.evidenceCache)
 }

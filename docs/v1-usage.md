@@ -37,3 +37,9 @@
 ## 4. 追问与导出
 
 同一 session 的追问应先更新 GoalSpec，再限制到追问相关范围。v1 的核心分析不会自动写入用户代码库。若用户明确确认报告导出，导出接口只允许在 workspace 内创建 `report.md`、`graph.mmd` 和 `atlas.json`。
+
+## 5. v1.2 增量证据
+
+同一 session 的首次分析会在内存中保留已脱敏、有界的 evidence cache。后续追问会先重新发现候选文件及其 `size`、`mtimeMs`、`ctimeMs` metadata：fingerprint 未变化的证据可以复用，变化、新增、metadata 不可用或被追问 scope 覆盖的路径会重新读取；删除路径会从当前有效证据中移除。
+
+缓存只存在当前 `AnalysisSession`，不写入 workspace、磁盘或数据库，不跨 session/workspace 复用，不联网也不上传代码。workspace root、安全策略和 cache schema 不兼容时整体失效。metadata fingerprint 不是内容 hash，因此极少数 metadata 未变化但内容已变的情况仍属于已知新鲜度限制；报告会输出 `reused`、`invalidated`、`reread`、`new` 和 `uncovered` 摘要。

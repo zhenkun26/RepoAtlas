@@ -92,7 +92,6 @@ export function selectReusableEvidence(
   const uncoveredPaths: string[] = []
   const discoveredPaths = new Set<string>()
   const scope = normalizeEvidenceScope(config.scope)
-  const forceScopeReread = options.forceScopeReread ?? config.scope !== undefined
 
   for (const file of files) {
     const relativePath = normalizeRelativePath(file.relativePath)
@@ -116,7 +115,7 @@ export function selectReusableEvidence(
       rereadPaths.push(relativePath)
       continue
     }
-    if (forceScopeReread && isPathCoveredByScope(relativePath, scope)) {
+    if (shouldForceScopeReread(entry, scope, options.forceScopeReread) && isPathCoveredByScope(relativePath, scope)) {
       rereadPaths.push(relativePath)
       continue
     }
@@ -214,6 +213,20 @@ function isValidFingerprint(fingerprint: unknown): fingerprint is EvidenceFinger
 
 function uniquePaths(paths: readonly string[]): string[] {
   return [...new Set(paths)]
+}
+
+function shouldForceScopeReread(entry: EvidenceCacheEntry, currentScope: readonly string[], override?: boolean): boolean {
+  if (override !== undefined) return override
+  const previousScope = normalizeEvidenceScope(entry.coverage)
+  return !scopesEqual(previousScope, currentScope) && scopeIsWithin(previousScope, currentScope)
+}
+
+function scopeIsWithin(outerScope: readonly string[], innerScope: readonly string[]): boolean {
+  return innerScope.every((innerPath) => outerScope.some((outerPath) => outerPath === '.' || outerPath === innerPath || innerPath.startsWith(`${outerPath}/`)))
+}
+
+function scopesEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value) => right.includes(value))
 }
 
 function normalizeRelativePath(value: string): string | undefined {
