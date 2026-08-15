@@ -1,0 +1,46 @@
+name: Harness compatibility
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: DeepSeek Harness pinned smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out RepoAtlas
+        uses: actions/checkout@v4
+
+      - name: Check out pinned DeepSeek Harness
+        uses: actions/checkout@v4
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 47f943859bef60e4160492346772ded9b24f765a
+          path: harness
+          fetch-depth: 1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: pnpm
+          cache-dependency-path: harness/pnpm-lock.yaml
+
+      - name: Install pinned Harness dependencies
+        working-directory: harness
+        run: pnpm install --frozen-lockfile
+
+      - name: Run RepoAtlas compatibility smoke
+        env:
+          REPO_ATLAS_HARNESS_ROOT: ${{ github.workspace }}/harness
+        run: node scripts/verify-harness-compatibility.mjs

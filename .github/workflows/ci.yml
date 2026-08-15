@@ -43,6 +43,9 @@ jobs:
       - name: Safety lint
         run: npm run lint
 
+      - name: Verify local source artifact
+        run: npm run verify:source-artifact
+
       - name: Validate OpenSpec specs and active changes
         run: npx --yes @fission-ai/openspec@1.7.0 validate --all --strict --no-interactive
 

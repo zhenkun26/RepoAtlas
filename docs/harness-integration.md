@@ -17,4 +17,10 @@ pnpm dsh web
 
 ## 公开分发边界
 
-RepoAtlas 当前按源码 checkout 分发：使用仓库根目录的 `cordis.patch.yml` 加载本地插件，不提供已发布的 npm 包或 `dist/` 编译产物。现有 fake-context/plugin contract tests 证明公开注册契约，但不等价于真实 Harness checkout 的集成验收；真实 Harness smoke test、兼容版本 pin 和 clean-clone/packed-install 评估列入后续版本。不要把 package metadata、bundle manifest 或 readiness observation 误解为已经完成发布或授权。
+RepoAtlas 当前按源码 checkout 分发：使用仓库根目录的 `cordis.patch.yml` 加载本地插件，不提供已发布的 npm 包或 `dist/` 编译产物。v2.13 的 `npm run verify:source-artifact` 只验证本地 tarball 能在隔离 consumer 中离线安装、保留 source entry point/metadata 和 bundle patch；它不提供普通 Node consumer 的 `.ts` import 契约，也不执行 npm publish。Node 24 的 built-in TypeScript stripping 会拒绝从 `node_modules` 加载 `.ts`，因此这项限制是当前 source/plugin bundle 决策的一部分。
+
+真实 Harness 兼容目标固定在 [reference/harness-compatibility.json](../reference/harness-compatibility.json)：公开仓库 `deepseek-ai/deepseek-harness` 的 `master` 分支仅作导航，`47f943859bef60e4160492346772ded9b24f765a` 才是验收 revision，配套 Node 24.x 与 pnpm 11.7.0。忽略的 `reference/deepseek-harness/` 是用户本地 checkout；只有 HEAD 与该 revision 完全一致时才可作为本地 smoke 输入，ahead/diverged checkout 必须 fail closed。
+
+在满足 pin 的 Harness checkout 中，可在 RepoAtlas 根目录运行 `REPO_ATLAS_HARNESS_ROOT=/absolute/path/to/deepseek-harness node scripts/verify-harness-compatibility.mjs`。它使用固定 `pnpm` argv、`shell:false` 和 task-owned 临时 `DSH_HOME`，验证 `plugin add`、`--dump-config` 中的 `repo-atlas/harness` 和 `dsh web --help`；不会写 RepoAtlas source workspace。对应的 GitHub Actions workflow 只有 `workflow_dispatch`，默认 PR/push CI 不会 clone 或安装外部 Harness。
+
+现有 fake-context/plugin contract tests 证明公开注册契约，但不等价于真实 Harness checkout 的集成验收；在手动 workflow 有成功且可审阅的 run 之前，不要把 package metadata、bundle manifest、本地 artifact pass 或 readiness observation 误解为已经完成发布、真实 Harness 支持或授权。

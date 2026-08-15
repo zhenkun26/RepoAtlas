@@ -21,7 +21,7 @@ RepoAtlas 是一个面向 DeepSeek Harness 的安全只读代码库分析插件�
 
 ## 开源化状态
 
-当前仓库是源码优先的公开准备基线：根目录包含 MIT 工作许可证、贡献/安全/行为规范和变更记录，GitHub Actions 在 Node.js 22/24 上运行质量门禁。`package.json` 仍保持 `private: true`，因此当前不宣称 npm 发布包、编译产物或首个公开 release；分发策略、真实 Harness smoke test 和首个 tag 由后续版本单独决定。详见 [公开发布 checklist](docs/release-checklist.md) 和 [后续路线](docs/roadmap.md)。
+当前仓库继续采用源码优先分发：根目录包含 MIT 工作许可证、贡献/安全/行为规范和变更记录，GitHub Actions 在 Node.js 22/24 上运行质量门禁，并在本地验证 source tarball 可离线安装。`package.json` 仍保持 `private: true`；这份 tarball 检查不等于 npm 发布包或普通 Node consumer import 契约。真实 Harness 兼容 smoke 已固定公开 revision，并只通过手动 workflow 执行；在成功运行被审阅前，不宣称真实 Harness 支持或首个公开 release。详见 [公开发布 checklist](docs/release-checklist.md) 和 [后续路线](docs/roadmap.md)。
 
 ## 授权与来源说明
 
@@ -41,6 +41,7 @@ npm ci
 npm run typecheck
 npm test
 npm run lint
+npm run verify:source-artifact
 npm run validate:openspec
 git diff --check
 ```
@@ -53,7 +54,14 @@ Node.js 24 可直接运行仓库中的 TypeScript 测试；`npm run typecheck` �
 npx --yes @fission-ai/openspec@1.7.0 validate --all --strict --no-interactive
 ```
 
-实际 Harness 加载使用本项目自带的 bundle manifest：在 Harness checkout 中执行 `pnpm dsh plugin --profile web add /absolute/path/to/RepoAtlas`，再运行 `pnpm dsh web`。适配器入口是 `src/harness/plugin.ts`，只使用公开的 `ctx.tools.register` 与 canonical output 契约；当前仓库没有把 Harness 私有源码或核心 fork 复制进来。当前公开基线尚未把真实 Harness checkout 纳入 RepoAtlas CI，不能把 fake-context 测试表述为真实 Harness 集成验收。
+实际 Harness 加载使用本项目自带的 bundle manifest：在 Harness checkout 中执行 `pnpm dsh plugin --profile web add /absolute/path/to/RepoAtlas`，再运行 `pnpm dsh web`。适配器入口是 `src/harness/plugin.ts`，只使用公开的 `ctx.tools.register` 与 canonical output 契约；当前仓库没有把 Harness 私有源码或核心 fork 复制进来。兼容性 smoke 的公开目标记录在 [reference/harness-compatibility.json](reference/harness-compatibility.json)，可在满足该 revision 的 Harness checkout 中运行：
+
+```bash
+REPO_ATLAS_HARNESS_ROOT=/absolute/path/to/deepseek-harness \
+  node scripts/verify-harness-compatibility.mjs
+```
+
+该命令和 [手动 Harness workflow](.github/workflows/harness-compatibility.yml) 只用于显式兼容性验收，不是插件 runtime 能力；在 workflow 成功运行并审阅前，fake-context 测试和 workflow 文件本身都不能表述为真实 Harness 集成已完成。普通 npm consumer 直接 import 当前源码 `.ts` entry point 也不属于支持契约，因为 Node 的 built-in TypeScript stripping 会拒绝从 `node_modules` 加载这类文件。
 
 ## 直接调用核心 API
 

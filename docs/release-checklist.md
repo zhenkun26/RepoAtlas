@@ -16,25 +16,25 @@ This checklist describes release readiness; it is not an instruction to publish,
 
 - [x] Local core API and plugin imports remain covered by the existing test suite.
 - [x] Fake-context Harness registration and action contract tests remain green.
-- [ ] Add a reproducible clean-clone and packed-install evaluation.
+- [x] Add a reproducible clean-checkout and packed-install evaluation: default CI starts from a clean checkout and runs `npm run verify:source-artifact` on Node.js 22/24.
 - [ ] Run a pinned real DeepSeek Harness smoke test and record the compatible revision.
 - [ ] Recheck README installation instructions against the actual public Harness release.
 
 ## Distribution decision
 
 - [x] Current posture is source-first: load the checkout through `cordis.patch.yml`; `private: true` remains enabled.
-- [ ] Decide whether RepoAtlas will publish an npm package or remain a source/plugin bundle.
+- [x] v2.13 decision: remain a source/plugin bundle; local packed-install is diagnostic and does not enable npm publication or ordinary Node consumer imports.
 - [ ] If npm is chosen, define a build output, `exports`, `files` allowlist, package smoke test, and Node/Harness compatibility policy in a new OpenSpec change.
-- [ ] If source-first is retained, define the supported checkout/ref and upgrade guidance in a new OpenSpec change.
+- [x] If source-first is retained, define the supported checkout/ref and upgrade guidance in the v2.13 OpenSpec change and `reference/harness-compatibility.json`.
 
 ## First public release
 
-- [ ] Complete and independently close the v2.11 OpenSpec change through its authorized sync/archive workflow.
-- [ ] Complete the v2.12 public-release-readiness change and review its provisional license assumption.
+- [x] Complete and independently close the v2.11 OpenSpec change through its authorized sync/archive workflow.
+- [x] Complete the v2.12 public-release-readiness change and preserve the MIT attribution/provenance guidance; named copyright-holder confirmation remains pending.
 - [ ] Create release notes from the changelog and verify the exact commit to be tagged.
 - [ ] Create the first tag and GitHub Release only with explicit authorization.
 - [ ] Publish or push only through the separately approved release procedure.
 
 ## Explicit non-claims
 
-Until the unchecked items above are resolved, RepoAtlas must not claim that it has a public package, a compiled distribution, a real-Harness CI integration, a support SLA, or a completed public release.
+Until the unchecked items above are resolved, RepoAtlas must not claim that it has a public npm package, a compiled distribution, a completed real-Harness compatibility run, a support SLA, or a completed public release. The manual workflow and local artifact smoke are evaluation mechanisms, not those claims.

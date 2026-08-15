@@ -24,9 +24,9 @@
 12. v2.8（已完成）：提供 bounded、脱敏、session-only 的 proposal lifecycle event history，记录实际状态转移及 blocked/interrupted/uncertain 结果；history 只读、不刷新 Git、不持久化、不跨 session。
 13. v2.9（已完成）：提供 session-only `inspect-recovery` guidance，将 proposal registry 状态映射为 bounded 的下一步建议和 manual-review-required/no-action 结论；不执行 recovery、不刷新 Git、不授权、不持久化。rollback、reset、revert、merge、冲突解决、force cleanup 和团队协作索引仍不属于本版本。
 14. v2.10（已完成）：提供 session-only `inspect-landing` preflight，使用固定本地 Git read-only inspection 区分 fast-forwardable、already-landed、source-ahead、diverged、dirty、revision drift、target unavailable 和 unknown；不执行 landing、merge、冲突解决、rollback、cleanup、remote 或 push，也不把观察结果视为授权或已完成。
-15. v2.11（当前实现）：提供 session-only `inspect-release` readiness observation，使用现有 worktree read-only inspection 区分 not-applicable、ready、proposal-state-blocked、worktree-dirty、identity-mismatch 和 unknown；不执行 release、remove、cleanup、approval、Git mutation 或持久化，也不把 ready 观察结果视为 release 已完成或授权。
-16. v2.12（当前开源化基线）：增加 MIT 工作许可证、贡献/行为/安全/变更文档、源码优先分发说明、release checklist 和 Node.js 22/24 GitHub Actions 门禁；保持 `private: true`，不发布 npm、不生成编译产物、不创建 tag/release，不改变任何 session-only runtime boundary。
-17. v2.13（计划，需新 OpenSpec change）：完成 clean-clone 与 packed-install 评估，决定源码 checkout 与 npm/package 分发策略，补充真实 DeepSeek Harness smoke test 和兼容版本 pin；不因 v2.12 自动获得发布或网络集成权限。
+15. v2.11（已完成）：提供 session-only `inspect-release` readiness observation，使用现有 worktree read-only inspection 区分 not-applicable、ready、proposal-state-blocked、worktree-dirty、identity-mismatch 和 unknown；不执行 release、remove、cleanup、approval、Git mutation 或持久化，也不把 ready 观察结果视为 release 已完成或授权。
+16. v2.12（已完成，开源化基线）：增加 MIT 工作许可证、贡献/行为/安全/变更文档、源码优先分发说明、release checklist 和 Node.js 22/24 GitHub Actions 门禁；保持 `private: true`，不发布 npm、不生成编译产物、不创建 tag/release，不改变任何 session-only runtime boundary。
+17. v2.13（当前实现，需独立验收）：确定继续 source/plugin bundle first；增加 clean-checkout + local packed-install evaluation，明确 tarball 不等于 npm consumer import；固定公开 DeepSeek Harness revision `47f943859bef60e4160492346772ded9b24f765a`、Node 24.x 和 pnpm 11.7.0，提供 shell-free compatibility runner 与仅 `workflow_dispatch` 的真实 Harness smoke workflow。外部 clone/install 仍不进入 runtime 或默认 CI，manual smoke 成功前不宣称真实集成完成。
 18. v2.14（计划，需新 OpenSpec change）：在许可证持有人确认、支持策略和 v2.13 验收完成后，定义首个公开 tag/release 流程；若选择 npm，再单独定义 build、exports、files allowlist、安装 smoke test 和版本兼容契约。
 
 每个版本都应先更新安全边界、预算、部分失败语义和验收 fixture，再扩展工具权限。v2.11 的 OpenSpec sync/archive/commit/push 与 v2.12 的 release baseline 仍是两条独立的审阅边界。
