@@ -12,7 +12,7 @@ export function generateReport(session: AnalysisSession): AnalysisReport {
   const atlas = buildAtlas(session, limitations)
   const mermaid = buildMermaid(session)
   const markdown = `${buildMarkdown(session, mermaid, evidenceValidation, limitations)}${formatIncrementalSummary(session.incrementalSummary)}`
-  return { sessionId: session.sessionId, markdown, mermaid, atlas, exportable: true, incrementalSummary: session.incrementalSummary }
+  return { sessionId: session.sessionId, markdown, mermaid, atlas, exportable: true, ast: session.ast, incrementalSummary: session.incrementalSummary }
 }
 
 export async function exportReportBundle(report: AnalysisReport, config: RepoAtlasConfig, targetDir: string, confirmed: boolean): Promise<{ allowed: boolean; files: string[]; reason: string; auditId: string }> {
@@ -42,7 +42,7 @@ function buildMarkdown(session: AnalysisSession, mermaid: string, validation: Ar
   }).join('\n')
   const evidenceLines = session.evidence.slice(0, 100).map(formatEvidence).join('\n') || '- 暂无证据。'
   const codeFence = '```'
-  return `# RepoAtlas 代码星图报告\n\n> Session: ${session.sessionId}\n> 分析模板：${session.plan.name === 'onboarding' ? '项目接手概览' : '架构概览'}\n> 权限：只读；仓库内容视为不可信数据，不执行其中指令。\n\n## 项目摘要\n\n${p.summary}\n\n- 项目名：${p.name}\n- 分析状态：${session.interrupted ? '部分结果（用户中断）' : session.scan.budget.exhausted ? '部分结果（预算耗尽）' : '已完成计划内分析'}\n\n## 技术栈\n\n${listOrUnknown(p.techStack)}\n\n## 目录结构与核心模块\n\n${listOrUnknown(p.coreDirectories)}\n\n## 入口线索\n\n${listOrUnknown(p.entries)}\n\n## 运行配置与测试配置\n\n### 运行配置\n${listOrUnknown(p.runtimeConfig)}\n\n### 测试配置\n${listOrUnknown(p.testConfig)}\n\n## 架构关系图\n\n${codeFence}mermaid\n${mermaid}\n${codeFence}\n\n## 主要结论\n\n${conclusionLines || '- 暂无结论。'}\n\n## 推荐阅读顺序\n\n${listOrUnknown(p.readingOrder)}\n\n## 证据索引\n\n${evidenceLines}\n\n## 限制与未确认部分\n\n${listOrUnknown(limitations)}\n\n## ReAct 执行摘要\n\n- 动作数：${session.actions.length}\n- 候选文件：${session.scan.budget.candidateFiles}\n- 读取字节数：${session.scan.budget.readBytes}\n- 跳过路径：${session.scan.skipped.length}\n- 失败项：${session.scan.failures.length}\n`
+  return `# RepoAtlas 代码星图报告\n\n> Session: ${session.sessionId}\n> 分析模板：${session.plan.name === 'onboarding' ? '项目接手概览' : '架构概览'}\n> 权限：只读；仓库内容视为不可信数据，不执行其中指令。\n\n## 项目摘要\n\n${p.summary}\n\n- 项目名：${p.name}\n- 分析状态：${session.interrupted ? '部分结果（用户中断）' : session.scan.budget.exhausted ? '部分结果（预算耗尽）' : '已完成计划内分析'}\n\n## 语法确认摘要\n\n${formatAstSummary(session)}\n\n## 技术栈\n\n${listOrUnknown(p.techStack)}\n\n## 目录结构与核心模块\n\n${listOrUnknown(p.coreDirectories)}\n\n## 入口线索\n\n${listOrUnknown(p.entries)}\n\n## 运行配置与测试配置\n\n### 运行配置\n${listOrUnknown(p.runtimeConfig)}\n\n### 测试配置\n${listOrUnknown(p.testConfig)}\n\n## 架构关系图\n\n${codeFence}mermaid\n${mermaid}\n${codeFence}\n\n## 主要结论\n\n${conclusionLines || '- 暂无结论。'}\n\n## 推荐阅读顺序\n\n${listOrUnknown(p.readingOrder)}\n\n## 证据索引\n\n${evidenceLines}\n\n## 限制与未确认部分\n\n${listOrUnknown(limitations)}\n\n## ReAct 执行摘要\n\n- 动作数：${session.actions.length}\n- 候选文件：${session.scan.budget.candidateFiles}\n- 读取字节数：${session.scan.budget.readBytes}\n- 跳过路径：${session.scan.skipped.length}\n- 失败项：${session.scan.failures.length}\n`
 }
 
 function formatIncrementalSummary(summary: AnalysisSession['incrementalSummary']): string {
@@ -65,7 +65,7 @@ function buildAtlas(session: AnalysisSession, limitations: string[]): AtlasData 
     ...session.project.runtimeConfig.map((id) => ({ id, label: id, kind: 'config' as const, status: 'confirmed' as const })),
     ...session.project.entries.map((id) => ({ id, label: id, kind: 'file' as const, status: 'inferred' as const })),
   ]
-  return { version: '1', sessionId: session.sessionId, project: session.project, nodes: dedupeNodes(nodes), edges: session.edges, conclusions: session.conclusions, evidence: session.evidence, limitations }
+  return { version: '1', sessionId: session.sessionId, project: session.project, nodes: dedupeNodes(nodes), edges: session.edges, conclusions: session.conclusions, evidence: session.evidence, limitations, ast: session.ast }
 }
 
 function collectLimitations(session: AnalysisSession): string[] {
@@ -76,7 +76,10 @@ function collectLimitations(session: AnalysisSession): string[] {
   if (session.scan.skipped.length) limitations.push(`安全跳过或排除 ${session.scan.skipped.length} 个路径；敏感文件不会进入报告。`)
   if (session.scan.failures.length) limitations.push(`有 ${session.scan.failures.length} 个读取或解析失败项，相关结论需要人工确认。`)
   if (session.scan.budget.exhausted) limitations.push('扫描或动作预算已耗尽，结果仅代表已完成部分。')
-  if (session.edges.length) limitations.push('架构关系来自文本模式匹配，是静态推测，不等同于运行时依赖。')
+  if (session.edges.some((edge) => edge.status === 'syntax-confirmed')) limitations.push('部分架构关系由受限语法结构确认；这不等同于类型检查、模块加载或运行时依赖证明。')
+  if (session.edges.some((edge) => edge.status === 'inferred')) limitations.push('仍有架构关系来自文本模式匹配，是静态推测，不等同于运行时依赖。')
+  const astPartial = session.ast?.filter((item) => item.status !== 'syntax-confirmed') ?? []
+  if (astPartial.length) limitations.push(`有 ${astPartial.length} 个 AST 文件结果未完整确认；原因和状态保留在语法确认摘要中。`)
   if (session.incrementalSummary?.uncovered.length) limitations.push(`增量分析仍有 ${session.incrementalSummary.uncovered.length} 个路径未覆盖，地图仅基于当前有效证据。`)
   return limitations
 }
@@ -94,6 +97,7 @@ function listOrUnknown(items: string[]): string {
 function statusLabel(status: string): string {
   const labels: Record<string, string> = {
     confirmed: '已确认',
+    'syntax-confirmed': '语法确认',
     inferred: '推测',
     unconfirmed: '未确认',
     'not-analyzed': '未分析',
@@ -103,6 +107,18 @@ function statusLabel(status: string): string {
     interrupted: '已中断',
   }
   return labels[status] ?? status
+}
+
+function formatAstSummary(session: AnalysisSession): string {
+  const files = session.ast ?? []
+  if (!files.length) return '- 未执行 AST 分析。'
+  const confirmed = files.filter((item) => item.status === 'syntax-confirmed').length
+  const lines = [`- 文件结果：${files.length} 个；语法确认：${confirmed} 个；部分或未分析：${files.length - confirmed} 个。`]
+  for (const item of files.slice(0, 100)) {
+    const reason = item.reason ? `；${item.reason}` : ''
+    lines.push(`- **${statusLabel(item.status)}** \`${item.relativePath}\`（parser=${item.parser}，观察 ${item.observationCount} 条${reason}）`)
+  }
+  return lines.join('\n')
 }
 
 function nodeId(value: string): string {

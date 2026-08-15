@@ -52,6 +52,10 @@ export function createEvidencePolicyFingerprint(config: RepoAtlasConfig): string
     maxFileBytes: config.maxFileBytes,
     maxTotalBytes: config.maxTotalBytes,
     maxActions: config.maxActions,
+    maxAstFiles: config.maxAstFiles,
+    maxAstTokensPerFile: config.maxAstTokensPerFile,
+    maxAstObservationsPerFile: config.maxAstObservationsPerFile,
+    maxAstObservationTextBytes: config.maxAstObservationTextBytes,
   })
 }
 

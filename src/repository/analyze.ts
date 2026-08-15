@@ -4,6 +4,7 @@ import { createAnalysisPlan } from './plan.ts'
 import { RepositoryScanner } from './scanner.ts'
 import { createConfig } from '../config.ts'
 import { createEvidence, addConclusion } from '../evidence.ts'
+import { isAstSupportedPath } from './ast-parser.ts'
 import {
   createEvidenceCache,
   getCompatibleEvidenceCache,
@@ -13,6 +14,8 @@ import {
 } from './evidence-cache.ts'
 import type {
   AnalysisSession,
+  AstFileAnalysis,
+  AstParseResult,
   ArchitectureEdge,
   Conclusion,
   Evidence,
@@ -39,6 +42,7 @@ export async function analyzeRepository(goal: GoalSpec, workspaceRoot: string, o
   const conclusions: Conclusion[] = []
   const edges: ArchitectureEdge[] = []
   let interrupted = false
+  const astResults: AstFileAnalysis[] = []
 
   const scanBefore = await scanner.discover(signal)
   addAction(actions, 'list', '.', '列举 workspace 文件', scanBefore.files.length ? `发现 ${scanBefore.files.length} 个候选文件` : '未发现可分析文件', [], scanBefore.budget.exhausted ? 'budget-exhausted' : 'confirmed')
@@ -113,6 +117,7 @@ export async function analyzeRepository(goal: GoalSpec, workspaceRoot: string, o
     addAction(actions, 'search', step.target, step.purpose, `找到 ${matches.length} 条线索`, ids, matches.length ? 'inferred' : 'unconfirmed')
   }
   for (const [sourcePath, text] of observedSearchText) {
+    textByPath.set(sourcePath, text)
     if (!evidence.some((item) => item.sourcePath === sourcePath && item.locator === '全文（已脱敏）')) {
       evidence.push(createEvidence(sourcePath, '全文（已脱敏）', text.slice(0, 8000), 'confirmed', true))
     }
@@ -120,9 +125,75 @@ export async function analyzeRepository(goal: GoalSpec, workspaceRoot: string, o
   freshReadPaths.push(...searchReadPaths)
   evidence = dedupeEvidence(evidence)
 
+  const astPaths = scanBefore.files
+    .filter((file) => file.kind === 'text' && isAstSupportedPath(file.relativePath) && isPathCoveredByScope(file.relativePath, config.scope))
+    .map((file) => file.relativePath)
+  const cachedAstPaths = new Set(evidence.filter((item) => item.evidenceKind === 'ast' && item.status === 'syntax-confirmed').map((item) => item.sourcePath))
+  for (const sourcePath of astPaths) {
+    if (cachedAstPaths.has(sourcePath)) {
+      const count = evidence.filter((item) => item.sourcePath === sourcePath && item.evidenceKind === 'ast').length
+      astResults.push({ relativePath: sourcePath, status: 'syntax-confirmed', parser: 'cache', observationCount: count })
+      continue
+    }
+    if (astResults.length >= config.maxAstFiles) {
+      astResults.push({ relativePath: sourcePath, status: 'budget-exhausted', parser: 'unavailable', observationCount: 0, reason: 'AST file budget exhausted; file was not analyzed' })
+      continue
+    }
+    if (signal?.aborted) {
+      interrupted = true
+      astResults.push({ relativePath: sourcePath, status: 'interrupted', parser: 'unavailable', observationCount: 0, reason: 'user interrupted AST analysis' })
+      continue
+    }
+    let sourceText = textByPath.get(sourcePath)
+    if (sourceText === undefined) {
+      const read = await scanner.readText(sourcePath, signal)
+      addAction(actions, 'read', sourcePath, `读取 ${sourcePath} 供 AST 分析`, read.reason ?? (read.text ? `读取 ${read.text.length} 个字符` : '无文本内容'), [], read.status)
+      readResults.push({ path: sourcePath, status: read.status })
+      freshReadPaths.push(sourcePath)
+      const item = createEvidence(sourcePath, '全文（已脱敏）', read.text ? read.text.slice(0, 8000) : read.reason ?? '未读取', read.status, read.redacted)
+      evidence = replaceEvidenceForPaths(evidence, [item], [sourcePath])
+      if (read.text !== undefined) {
+        sourceText = read.text
+        textByPath.set(sourcePath, read.text)
+      }
+    }
+    if (sourceText === undefined) {
+      const failed = { relativePath: sourcePath, status: readResults.find((item) => item.path === sourcePath)?.status as AstFileAnalysis['status'] ?? 'read-failed', parser: 'unavailable' as const, observationCount: 0, reason: 'safe read did not produce text' }
+      astResults.push(failed)
+      continue
+    }
+    const parsed = await scanner.parseAst(sourcePath, signal, sourceText)
+    const astEvidence: Evidence[] = parsed.observations.map((observation) => createEvidence(
+      sourcePath,
+      `第 ${observation.line} 行第 ${observation.column} 列`,
+      observation.summary,
+      'syntax-confirmed',
+      true,
+      { evidenceKind: 'ast', astObservation: observation },
+    ))
+    const failureEvidence = parsed.reason && parsed.status !== 'syntax-confirmed'
+      ? [createEvidence(sourcePath, 'AST', parsed.reason, parsed.status, false, { evidenceKind: 'ast' })]
+      : []
+    evidence.push(...astEvidence, ...failureEvidence)
+    const astEvidenceIds = [...astEvidence, ...failureEvidence].map((item) => item.evidenceId)
+    addAction(actions, 'parse-ast', sourcePath, `解析 ${sourcePath} 的受限语法结构`, parsed.reason ?? `生成 ${parsed.observationCount} 条语法观察`, astEvidenceIds, parsed.status)
+    astResults.push({ relativePath: parsed.relativePath, status: parsed.status, parser: parsed.parser, observationCount: parsed.observationCount, reason: parsed.reason })
+    if (parsed.status === 'interrupted') interrupted = true
+  }
+  for (const sourcePath of scanBefore.files
+    .filter((file) => file.kind === 'text' && !isAstSupportedPath(file.relativePath) && isPathCoveredByScope(file.relativePath, config.scope))
+    .map((file) => file.relativePath)
+    .slice(0, 100)) {
+    astResults.push({ relativePath: sourcePath, status: 'not-analyzed', parser: 'unavailable', observationCount: 0, reason: 'v1.3 AST analysis supports only .ts, .tsx, .js, and .jsx files' })
+  }
+  evidence = dedupeEvidence(evidence)
+
   if (plan.name === 'architecture') {
     edges.push(...inferEdges(scanBefore.files, evidence))
-    if (edges.length) addConclusion(conclusions, `已从静态文本中推断 ${edges.length} 条模块关系；未执行代码，因此关系仍需人工确认。`, 'inferred', edges.flatMap((edge) => edge.evidenceIds))
+    const syntaxEdges = edges.filter((edge) => edge.status === 'syntax-confirmed')
+    const inferredEdges = edges.filter((edge) => edge.status === 'inferred')
+    if (syntaxEdges.length) addConclusion(conclusions, `已由受限语法结构确认 ${syntaxEdges.length} 条模块关系；未执行代码，也未进行类型或运行时证明。`, 'syntax-confirmed', syntaxEdges.flatMap((edge) => edge.evidenceIds))
+    if (inferredEdges.length) addConclusion(conclusions, `另有 ${inferredEdges.length} 条模块关系仅由静态文本推断；未执行代码，因此仍需人工确认。`, 'inferred', inferredEdges.flatMap((edge) => edge.evidenceIds))
   }
 
   const scan = scanner.snapshot()
@@ -130,7 +201,7 @@ export async function analyzeRepository(goal: GoalSpec, workspaceRoot: string, o
   if (interrupted) addConclusion(conclusions, '用户中断了分析，以上结果保留已完成部分。', 'interrupted', [])
   const summary = createIncrementalSummary(incremental, selection, freshReadPaths, readResults, readTargets.slice(freshReadPaths.length))
   const evidenceCache = buildEvidenceCache(config, scan.files, evidence, compatibleCache, selection, freshReadPaths)
-  return { sessionId, workspaceRoot: config.workspaceRoot, goal, plan, scan, evidence, conclusions, actions, edges, project, interrupted, evidenceCache, incrementalSummary: summary }
+  return { sessionId, workspaceRoot: config.workspaceRoot, goal, plan, scan, evidence, conclusions, actions, edges, project, interrupted, ast: astResults, evidenceCache, incrementalSummary: summary }
 }
 
 async function parseConfigs(scanner: RepositoryScanner, paths: string[], signal?: AbortSignal, providedText?: ReadonlyMap<string, string>): Promise<Array<{ path: string; values: Record<string, unknown> }>> {
@@ -209,7 +280,7 @@ function buildEvidenceCache(
 }
 
 function isCacheableEvidence(item: Evidence): boolean {
-  return ['confirmed', 'inferred', 'unconfirmed', 'not-analyzed'].includes(item.status)
+  return ['confirmed', 'syntax-confirmed', 'inferred', 'unconfirmed', 'not-analyzed'].includes(item.status)
 }
 
 function inferProject(workspaceRoot: string, files: AnalysisSession['scan']['files'], configs: Array<{ path: string; values: Record<string, unknown> }>, evidence: Evidence[]): AnalysisSession['project'] {
@@ -246,10 +317,17 @@ function inferEdges(files: AnalysisSession['scan']['files'], evidence: Evidence[
     ...evidence.map((item) => item.sourcePath).filter(isRepositoryRelativePath),
   ]).filter((file) => /\.(?:[cm]?[jt]s|tsx?|jsx?|py|go|rs)$/.test(file))
   const edges: ArchitectureEdge[] = []
+  for (const item of evidence.filter((candidate) => candidate.evidenceKind === 'ast' && candidate.astObservation?.kind === 'import' && candidate.astObservation.moduleSpecifier)) {
+    const source = item.sourcePath
+    const imported = item.astObservation?.moduleSpecifier
+    if (!imported) continue
+    const target = resolveLocalTarget(source, imported, sourceFiles)
+    if (target) edges.push({ from: source, to: target, relation: 'imports', evidenceIds: [item.evidenceId], status: 'syntax-confirmed' })
+  }
   for (const source of sourceFiles) {
-    const sourceEvidence = evidence.filter((item) => item.sourcePath === source)
+    const sourceEvidence = evidence.filter((item) => item.sourcePath === source && item.evidenceKind !== 'ast')
     const observation = sourceEvidence.map((item) => item.observation).join('\n')
-    const imports = [...observation.matchAll(/(?:from|import|require\s*\(|include\s+)["'`]?([@A-Za-z0-9_./-]+)/g)].map((match) => match[1])
+    const imports = [...observation.matchAll(/(?:from|import|require\s*\(|include\s+)\s*["'`]?([@A-Za-z0-9_./-]+)/g)].map((match) => match[1])
     for (const imported of imports.slice(0, 20)) {
       const target = resolveLocalTarget(source, imported, sourceFiles)
       if (!target) continue
@@ -270,7 +348,18 @@ function resolveLocalTarget(source: string, imported: string, files: string[]): 
 }
 
 function dedupeEdges(edges: ArchitectureEdge[]): ArchitectureEdge[] {
-  return [...new Map(edges.map((edge) => [`${edge.from}->${edge.to}`, edge])).values()]
+  const merged = new Map<string, ArchitectureEdge>()
+  for (const edge of edges) {
+    const key = `${edge.from}->${edge.to}`
+    const previous = merged.get(key)
+    if (!previous) {
+      merged.set(key, { ...edge, evidenceIds: [...new Set(edge.evidenceIds)] })
+      continue
+    }
+    previous.evidenceIds = [...new Set([...previous.evidenceIds, ...edge.evidenceIds])]
+    if (edge.status === 'syntax-confirmed') previous.status = 'syntax-confirmed'
+  }
+  return [...merged.values()]
 }
 
 function addAction(actions: ReActActionRecord[], action: ReActActionRecord['action'], input: string, thought: string, observation: string, evidenceIds: string[], status: ReActActionRecord['status']): void {

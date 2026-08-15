@@ -2,7 +2,7 @@ import { checkWorkspacePath } from './path-policy.ts'
 import { isSensitivePath } from './content-policy.ts'
 import type { AuditEvent, PolicyDecision, RepoAtlasConfig, ToolAction } from '../types.ts'
 
-const READONLY_ACTIONS = new Set<ToolAction>(['list', 'read', 'search', 'parse-config'])
+const READONLY_ACTIONS = new Set<ToolAction>(['list', 'read', 'search', 'parse-config', 'parse-ast'])
 
 export function decideAction(config: RepoAtlasConfig, action: ToolAction, requestedPath?: string, userConfirmedExport = false): PolicyDecision {
   const auditId = `audit-${crypto.randomUUID()}`

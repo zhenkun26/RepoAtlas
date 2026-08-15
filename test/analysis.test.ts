@@ -28,7 +28,10 @@ test('architecture analysis only reports static inferred relationships', async (
   const session = await analyzeRepository(goal, fixture('complete-repo'))
   const report = generateReport(session)
   assert.ok(session.actions.some((action) => action.action === 'search'))
+  assert.ok(session.actions.some((action) => action.action === 'parse-ast'))
+  assert.ok(session.edges.some((edge) => edge.status === 'syntax-confirmed' && edge.evidenceIds.length > 1))
   assert.match(report.mermaid, /flowchart TD/)
+  assert.match(report.markdown, /语法确认摘要/)
   assert.ok(report.atlas.limitations.some((item) => item.includes('静态')))
 })
 
@@ -53,6 +56,8 @@ test('analysis owns a session-only cache and reports incremental reuse in struct
   assert.ok(refined.incrementalSummary?.reread.includes('src/index.ts'))
   assert.equal(refined.actions.some((action) => action.action === 'read' && action.input === 'README.md'), false)
   assert.equal(refined.actions.some((action) => action.action === 'read' && action.input === 'package.json'), false)
+  assert.ok(refined.actions.some((action) => action.action === 'parse-ast' && action.input.startsWith('src/')))
+  assert.ok(refined.ast?.some((item) => item.relativePath === 'src/index.ts' && item.parser === 'bounded-structural'))
   assert.equal(report.incrementalSummary?.mode, 'incremental')
   assert.match(report.markdown, /增量证据摘要/)
   assert.match(report.markdown, /reused：/)
@@ -70,6 +75,7 @@ test('changed and deleted paths replace stale evidence and remove stale architec
     const goal = resolveStart(createGoalSpec({ intent: 'architecture' }), 'direct')
     const first = await analyzeRepository(goal, root)
     const oldIndexIds = new Set(first.evidence.filter((item) => item.sourcePath === 'src/index.ts').map((item) => item.evidenceId))
+    const oldAstIds = new Set(first.evidence.filter((item) => item.sourcePath === 'src/index.ts' && item.evidenceKind === 'ast').map((item) => item.evidenceId))
     await fs.writeFile(path.join(root, 'src', 'index.ts'), "export const value = 'changed content'\n", 'utf8')
     await fs.rm(path.join(root, 'src', 'server.ts'))
 
@@ -81,6 +87,7 @@ test('changed and deleted paths replace stale evidence and remove stale architec
     assert.ok(refined.incrementalSummary?.reread.includes('src/index.ts'))
     assert.equal(refined.evidence.some((item) => item.sourcePath === 'src/server.ts'), false)
     assert.ok(newIndexIds.every((id) => !oldIndexIds.has(id)))
+    assert.ok(refined.evidence.filter((item) => item.sourcePath === 'src/index.ts' && item.evidenceKind === 'ast').every((item) => !oldAstIds.has(item.evidenceId)))
     assert.ok(refined.evidence.some((item) => item.sourcePath === 'src/index.ts' && item.observation.includes('changed content')))
   } finally {
     await fs.rm(root, { recursive: true, force: true })
@@ -95,6 +102,8 @@ test('scope expansion reuses previously analyzed paths and reads only the new co
   assert.ok(expanded.incrementalSummary?.reused.includes('src/index.ts'))
   assert.ok(expanded.incrementalSummary?.new.includes('package.json'))
   assert.equal(expanded.actions.some((action) => action.action === 'read' && action.input === 'src/index.ts'), false)
+  assert.equal(expanded.actions.some((action) => action.action === 'parse-ast' && action.input === 'src/index.ts'), false)
+  assert.ok(expanded.ast?.some((item) => item.relativePath === 'src/index.ts' && item.parser === 'cache'))
   assert.equal(expanded.actions.some((action) => action.action === 'read' && action.input === 'package.json'), true)
 })
 

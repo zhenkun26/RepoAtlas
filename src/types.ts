@@ -2,6 +2,7 @@ export type GoalIntent = 'onboarding' | 'architecture' | 'custom'
 
 export type AnalysisStatus =
   | 'confirmed'
+  | 'syntax-confirmed'
   | 'inferred'
   | 'unconfirmed'
   | 'not-analyzed'
@@ -29,6 +30,10 @@ export interface RepoAtlasConfig {
   maxFileBytes: number
   maxTotalBytes: number
   maxActions: number
+  maxAstFiles: number
+  maxAstTokensPerFile: number
+  maxAstObservationsPerFile: number
+  maxAstObservationTextBytes: number
   controlledActions: ControlledActionsConfig
 }
 
@@ -54,6 +59,7 @@ export type ToolAction =
   | 'read'
   | 'search'
   | 'parse-config'
+  | 'parse-ast'
   | 'write'
   | 'delete'
   | 'rename'
@@ -89,9 +95,36 @@ export interface Evidence {
   observation: string
   status: AnalysisStatus
   redactionState: 'clean' | 'redacted' | 'not-applicable'
+  evidenceKind?: 'text' | 'ast'
+  astObservation?: AstObservation
 }
 
-export const EVIDENCE_CACHE_SCHEMA_VERSION = 1 as const
+export type AstObservationKind = 'import' | 'export' | 'declaration' | 'function' | 'class' | 'variable' | 'call'
+
+export interface AstObservation {
+  kind: AstObservationKind
+  line: number
+  column: number
+  summary: string
+  name?: string
+  moduleSpecifier?: string
+}
+
+export type AstParser = 'typescript-compiler' | 'bounded-structural' | 'cache' | 'unavailable'
+
+export interface AstFileAnalysis {
+  relativePath: string
+  status: AnalysisStatus
+  parser: AstParser
+  observationCount: number
+  reason?: string
+}
+
+export interface AstParseResult extends AstFileAnalysis {
+  observations: AstObservation[]
+}
+
+export const EVIDENCE_CACHE_SCHEMA_VERSION = 2 as const
 
 export interface EvidenceFingerprint {
   relativePath: string
@@ -179,7 +212,7 @@ export interface ArchitectureEdge {
 export interface AnalysisPlan {
   name: 'onboarding' | 'architecture'
   steps: Array<{
-    action: Extract<ToolAction, 'list' | 'read' | 'search' | 'parse-config'>
+    action: Extract<ToolAction, 'list' | 'read' | 'search' | 'parse-config' | 'parse-ast'>
     target: string
     purpose: string
   }>
@@ -195,6 +228,7 @@ export interface AnalysisSession {
   conclusions: Conclusion[]
   actions: ReActActionRecord[]
   edges: ArchitectureEdge[]
+  ast?: AstFileAnalysis[]
   project: {
     name: string
     summary: string
@@ -216,6 +250,7 @@ export interface AtlasData {
   project: AnalysisSession['project']
   nodes: Array<{ id: string; label: string; kind: 'file' | 'directory' | 'config'; status: AnalysisStatus }>
   edges: ArchitectureEdge[]
+  ast?: AstFileAnalysis[]
   conclusions: Conclusion[]
   evidence: Evidence[]
   limitations: string[]
@@ -227,5 +262,6 @@ export interface AnalysisReport {
   mermaid: string
   atlas: AtlasData
   exportable: boolean
+  ast?: AstFileAnalysis[]
   incrementalSummary?: IncrementalEvidenceSummary
 }

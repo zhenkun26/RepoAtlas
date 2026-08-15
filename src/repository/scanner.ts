@@ -4,7 +4,9 @@ import { createConfig } from '../config.ts'
 import { redactSecretLike, isSensitivePath } from '../safety/content-policy.ts'
 import { decideAction, auditDecision } from '../safety/policy-gate.ts'
 import { assertWorkspacePath, checkWorkspacePath } from '../safety/path-policy.ts'
-import type { AuditEvent, EvidenceFingerprint, ReadResult, RepoAtlasConfig, ScanResult, ScannedFile, ToolAction } from '../types.ts'
+import { isPathCoveredByScope } from './evidence-cache.ts'
+import { isAstSupportedPath, parseAstSource } from './ast-parser.ts'
+import type { AstParseResult, AuditEvent, EvidenceFingerprint, ReadResult, RepoAtlasConfig, ScanResult, ScannedFile, ToolAction } from '../types.ts'
 
 export class RepositoryScanner {
   readonly config: RepoAtlasConfig
@@ -125,6 +127,28 @@ export class RepositoryScanner {
     }
   }
 
+  async parseAst(relativePath: string, signal?: AbortSignal, providedText?: string): Promise<AstParseResult> {
+    if (signal?.aborted) return astResult(relativePath, 'interrupted', 'unavailable', 'user interrupted AST analysis')
+    const decision = this.beginAction('parse-ast', relativePath)
+    if (!decision.allowed) {
+      const status = decision.reason.includes('budget') ? 'budget-exhausted' : 'safety-skipped'
+      return astResult(relativePath, status, 'unavailable', decision.reason)
+    }
+    const absolutePath = assertWorkspacePath(this.config.workspaceRoot, relativePath)
+    const normalized = normalizeRelative(this.config.workspaceRoot, absolutePath)
+    if (!isPathCoveredByScope(normalized, this.config.scope)) {
+      this.skip(normalized, 'path is outside confirmed analysis scope')
+      return astResult(normalized, 'safety-skipped', 'unavailable', 'path is outside confirmed analysis scope')
+    }
+    if (!isAstSupportedPath(normalized)) return parseAstSource(normalized, providedText ?? '', this.astOptions(signal))
+    if (providedText === undefined) {
+      const read = await this.readText(normalized, signal)
+      if (read.text === undefined) return astResult(normalized, read.status, 'unavailable', read.reason ?? 'read did not produce text')
+      providedText = read.text
+    }
+    return parseAstSource(normalized, redactSecretLike(providedText).text, this.astOptions(signal))
+  }
+
   snapshot(): ScanResult {
     return {
       files: [...this.scanned],
@@ -218,6 +242,19 @@ export class RepositoryScanner {
     this.skipped.push({ path: relativePath, reason })
     this.audits.push({ auditId: `skip-${crypto.randomUUID()}`, timestamp: new Date().toISOString(), action: 'skip', status: 'skipped', path: relativePath, reason })
   }
+
+  private astOptions(signal?: AbortSignal) {
+    return {
+      signal,
+      maxTokens: this.config.maxAstTokensPerFile,
+      maxObservations: this.config.maxAstObservationsPerFile,
+      maxObservationTextBytes: this.config.maxAstObservationTextBytes,
+    }
+  }
+}
+
+function astResult(relativePath: string, status: AstParseResult['status'], parser: AstParseResult['parser'], reason: string): AstParseResult {
+  return { relativePath, status, parser, observationCount: 0, observations: [], reason }
 }
 
 function createFingerprint(relativePath: string, stat: { size: number; mtimeMs: number; ctimeMs: number }): EvidenceFingerprint | undefined {

@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-08-15
+goal: 在不扩大只读权限、不联网、不执行代码的前提下，为受支持语言增加有界 AST 解析和 evidence-backed 语法确认。

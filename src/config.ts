@@ -29,6 +29,10 @@ export const DEFAULT_CONFIG: Omit<RepoAtlasConfig, 'workspaceRoot'> = {
   maxFileBytes: 1 * 1024 * 1024,
   maxTotalBytes: 20 * 1024 * 1024,
   maxActions: 60,
+  maxAstFiles: 64,
+  maxAstTokensPerFile: 12_000,
+  maxAstObservationsPerFile: 100,
+  maxAstObservationTextBytes: 240,
   controlledActions: {
     enabled: false,
     recipes: [],
@@ -45,6 +49,10 @@ export function createConfig(workspaceRoot: string, overrides: Partial<Omit<Repo
     maxFileBytes: positiveInteger(overrides.maxFileBytes ?? DEFAULT_CONFIG.maxFileBytes, 'maxFileBytes'),
     maxTotalBytes: positiveInteger(overrides.maxTotalBytes ?? DEFAULT_CONFIG.maxTotalBytes, 'maxTotalBytes'),
     maxActions: positiveInteger(overrides.maxActions ?? DEFAULT_CONFIG.maxActions, 'maxActions'),
+    maxAstFiles: positiveInteger(overrides.maxAstFiles ?? DEFAULT_CONFIG.maxAstFiles, 'maxAstFiles'),
+    maxAstTokensPerFile: positiveInteger(overrides.maxAstTokensPerFile ?? DEFAULT_CONFIG.maxAstTokensPerFile, 'maxAstTokensPerFile'),
+    maxAstObservationsPerFile: positiveInteger(overrides.maxAstObservationsPerFile ?? DEFAULT_CONFIG.maxAstObservationsPerFile, 'maxAstObservationsPerFile'),
+    maxAstObservationTextBytes: positiveInteger(overrides.maxAstObservationTextBytes ?? DEFAULT_CONFIG.maxAstObservationTextBytes, 'maxAstObservationTextBytes'),
     controlledActions: normalizeControlledActions(overrides.controlledActions ?? DEFAULT_CONFIG.controlledActions),
   }
 }

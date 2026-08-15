@@ -19,7 +19,8 @@
     "demo": "node --experimental-strip-types examples/demo.ts",
     "typecheck": "node scripts/typecheck.mjs",
     "lint": "node scripts/lint.mjs",
-    "validate:openspec": "openspec validate --specs --strict --no-interactive"
+    "validate:openspec": "openspec validate --specs --strict --no-interactive",
+    "validate:openspec:change": "openspec validate --strict --no-interactive"
   },
   "engines": {
     "node": ">=22"

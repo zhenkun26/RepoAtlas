@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { redactSecretLike } from './safety/content-policy.ts'
-import type { AnalysisStatus, Conclusion, Evidence } from './types.ts'
+import type { AnalysisStatus, AstObservation, Conclusion, Evidence } from './types.ts'
 
-export function createEvidence(sourcePath: string, locator: string, observation: string, status: AnalysisStatus, alreadyRedacted = false): Evidence {
+export function createEvidence(sourcePath: string, locator: string, observation: string, status: AnalysisStatus, alreadyRedacted = false, metadata: { evidenceKind?: 'text' | 'ast'; astObservation?: AstObservation } = {}): Evidence {
   const redacted = alreadyRedacted ? { text: observation, redacted: false } : redactSecretLike(observation)
   return {
     evidenceId: `evidence-${randomUUID()}`,
@@ -11,6 +11,7 @@ export function createEvidence(sourcePath: string, locator: string, observation:
     observation: redacted.text,
     status,
     redactionState: redacted.redacted ? 'redacted' : alreadyRedacted ? 'not-applicable' : 'clean',
+    ...metadata,
   }
 }
 

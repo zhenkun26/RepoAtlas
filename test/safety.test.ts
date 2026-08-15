@@ -30,6 +30,7 @@ test('sensitive files and secret-like values are protected', () => {
 test('policy gate is allowlisted and repository instructions are inert', () => {
   const config = createConfig(process.cwd())
   assert.equal(decideAction(config, 'read', 'package.json').allowed, true)
+  assert.equal(decideAction(config, 'parse-ast', 'src/main.ts').allowed, true)
   for (const action of ['write', 'delete', 'rename', 'shell', 'network', 'install', 'git-push', 'external-service'] as const) {
     assert.equal(decideAction(config, action, 'package.json').allowed, false, `${action} must be denied`)
   }

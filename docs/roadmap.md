@@ -12,7 +12,7 @@
 
 1. v1.1（已完成）：在明确授权和沙箱中增加受控 recipe 执行，并把命令、参数、输出和审批结果纳入 Harness 审计链；标准 sandbox Web 成功路径与 no-sandbox fail-closed 路径均已验收。
 2. v1.2（已完成 OpenSpec 边界）：加入仅限 session 的增量地图与 evidence cache，只重新读取新增、变化、metadata 不可用或被追问覆盖的范围；缓存不持久化、不跨 session、不联网，metadata 新鲜度限制已记录。
-3. v1.3：按语言接入 AST 解析，区分“文本推测”和“语法确认”的关系。
+3. v1.3（当前实现）：按语言接入受安全边界和预算约束的 TypeScript/JavaScript 语法确认，区分“文本推测”和“语法确认”的关系；AST evidence 仅限当前 session，并与 metadata cache 共同失效。
 4. v2：在独立工作树中提供用户确认后的代码变更提案，仍然默认不提交、不推送。
 
 每个版本都应先更新安全边界、预算、部分失败语义和验收 fixture，再扩展工具权限。

@@ -2,7 +2,7 @@
 
 ## 默认策略
 
-RepoAtlas v1 的默认权限是只读。Policy Gate 只允许列举、读取、搜索和常见配置摘要；以下能力默认拒绝：写入、删除、重命名、任意 Shell、网络访问、依赖安装、Git 推送和第三方服务调用。
+RepoAtlas v1.3 的默认权限是只读。Policy Gate 只允许列举、读取、搜索、常见配置摘要和受边界约束的 `parse-ast`；以下能力默认拒绝：写入、删除、重命名、任意 Shell、网络访问、依赖安装、Git 推送和第三方服务调用。
 
 报告导出是显式确认后的受控例外：用户必须确认，目标路径必须仍在 workspace 内，且只创建报告三件套。没有确认时不会写文件。
 
@@ -28,11 +28,13 @@ README、注释、脚本、配置和生成文件均是被分析的数据，不�
 
 ## 资源与可审计性
 
-默认预算为：最多 5000 个候选文件、单文件 1 MiB、总文本 20 MiB、60 个 ReAct 动作。拒绝、跳过、预算耗尽和失败会写入当前 session 的审计/限制信息；不会上传到远程服务。
+默认预算为：最多 5000 个候选文件、单文件 1 MiB、总文本 20 MiB、60 个 ReAct 动作；AST 另有最多 64 个文件、每文件 12,000 tokens、100 条观察和 240 字符摘要上限。拒绝、跳过、预算耗尽和失败会写入当前 session 的审计/限制信息；不会上传到远程服务。
 
 v1.2 evidence cache 只保存当前 session 内已经过路径策略、文本读取和 Secret-like 脱敏的有界 evidence，以及 size/mtimeMs/ctimeMs fingerprint。缓存不保存未脱敏原文，不写入 workspace 或其他持久化介质，不跨 session，不执行 Shell，不访问网络，也不上传代码。
 
 metadata fingerprint 只能提供有限的新鲜度保证；metadata 不可用、workspace root、安全策略或 cache schema 不兼容时按失效处理，读取仍必须经过原有 path policy、预算、脱敏和 AbortSignal 边界。
+
+AST 只处理已确认 scope 内的 `.ts`、`.tsx`、`.js`、`.jsx` 脱敏文本。它输出带位置的最小语法观察，不执行源码、不加载模块、不建立运行时调用图；文本推测不得因命名相同或 cache 命中升级为“语法确认”。AST evidence 与其他 evidence 一样只存在当前 session 内，不写入 workspace、磁盘、数据库或远程服务。
 
 ## 回滚
 
