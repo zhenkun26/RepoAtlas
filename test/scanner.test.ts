@@ -15,6 +15,18 @@ test('scanner lists readable files and excludes sensitive/default generated path
   assert.match(readme.text ?? '', /Fixture App/)
 })
 
+test('scanner discovers fingerprints without consuming full-read budget', async () => {
+  const scanner = new RepositoryScanner(fixture('complete-repo'))
+  const result = await scanner.discover()
+  const readme = result.files.find((file) => file.relativePath === 'README.md')
+  assert.ok(readme?.fingerprint)
+  assert.equal(readme?.fingerprint?.relativePath, 'README.md')
+  assert.equal(readme?.fingerprint?.sizeBytes, readme?.sizeBytes)
+  assert.ok(Number.isFinite(readme?.fingerprint?.mtimeMs))
+  assert.ok(Number.isFinite(readme?.fingerprint?.ctimeMs))
+  assert.equal(result.budget.readBytes, 0)
+})
+
 test('scanner skips sensitive paths and redacts secret-like content', async () => {
   const scanner = new RepositoryScanner(fixture('sensitive-repo'))
   const result = await scanner.discover()
@@ -42,4 +54,18 @@ test('scanner preserves partial failures and budget statuses', async () => {
   controller.abort()
   const interrupted = await parseScanner.readText('big.txt', controller.signal)
   assert.equal(interrupted.status, 'interrupted')
+})
+
+test('incremental rereads continue to honor read budget and AbortSignal', async () => {
+  const budgetScanner = new RepositoryScanner(fixture('complete-repo'), { maxTotalBytes: 1 })
+  await budgetScanner.discover()
+  const budgetResult = await budgetScanner.readText('README.md')
+  assert.equal(budgetResult.status, 'budget-exhausted')
+  assert.equal(budgetScanner.snapshot().budget.readBytes, 0)
+
+  const controller = new AbortController()
+  controller.abort()
+  const interrupted = await budgetScanner.readText('src/index.ts', controller.signal)
+  assert.equal(interrupted.status, 'interrupted')
+  assert.equal(interrupted.redacted, false)
 })

@@ -91,6 +91,37 @@ export interface Evidence {
   redactionState: 'clean' | 'redacted' | 'not-applicable'
 }
 
+export const EVIDENCE_CACHE_SCHEMA_VERSION = 1 as const
+
+export interface EvidenceFingerprint {
+  relativePath: string
+  sizeBytes: number
+  mtimeMs: number
+  ctimeMs: number
+}
+
+export interface EvidenceCacheEntry {
+  fingerprint: EvidenceFingerprint
+  coverage: string[]
+  evidence: Evidence[]
+}
+
+export interface EvidenceCache {
+  schemaVersion: typeof EVIDENCE_CACHE_SCHEMA_VERSION
+  workspaceRoot: string
+  policyFingerprint: string
+  entries: EvidenceCacheEntry[]
+}
+
+export interface IncrementalEvidenceSummary {
+  mode: 'full' | 'incremental'
+  reused: string[]
+  invalidated: string[]
+  reread: string[]
+  new: string[]
+  uncovered: string[]
+}
+
 export interface Conclusion {
   conclusionId: string
   text: string
@@ -112,6 +143,7 @@ export interface ScannedFile {
   relativePath: string
   sizeBytes: number
   kind: 'text' | 'binary' | 'too-large' | 'sensitive' | 'unreadable'
+  fingerprint?: EvidenceFingerprint
 }
 
 export interface ScanResult {
@@ -174,6 +206,8 @@ export interface AnalysisSession {
     readingOrder: string[]
   }
   interrupted: boolean
+  evidenceCache?: EvidenceCache
+  incrementalSummary?: IncrementalEvidenceSummary
 }
 
 export interface AtlasData {
@@ -193,4 +227,5 @@ export interface AnalysisReport {
   mermaid: string
   atlas: AtlasData
   exportable: boolean
+  incrementalSummary?: IncrementalEvidenceSummary
 }

@@ -1,12 +1,12 @@
 ## 1. Session cache contract
 
-- [ ] 1.1 增加 session-local evidence cache、metadata fingerprint 和增量摘要类型，保持旧 `AnalysisSession`/`AnalysisReport` 调用方可兼容。
-- [ ] 1.2 实现 workspace root、安全配置、cache schema version 和 scope 覆盖范围的兼容性判定，覆盖不兼容时整体失效。
+- [x] 1.1 增加 session-local evidence cache、metadata fingerprint 和增量摘要类型，保持旧 `AnalysisSession`/`AnalysisReport` 调用方可兼容。
+- [x] 1.2 实现 workspace root、安全配置、cache schema version 和 scope 覆盖范围的兼容性判定，覆盖不兼容时整体失效。
 
 ## 2. Incremental scanner
 
-- [ ] 2.1 将候选路径 metadata discovery 与全文读取拆开；未变化且兼容的路径复用已脱敏 evidence，不重复全文读取。
-- [ ] 2.2 对新增、变化、metadata 不可用、删除和追问覆盖路径执行安全重读，并替换对应旧 evidence，保持 path policy、脱敏、预算和 AbortSignal 语义。
+- [x] 2.1 将候选路径 metadata discovery 与全文读取拆开；未变化且兼容的路径复用已脱敏 evidence，不重复全文读取。
+- [x] 2.2 对新增、变化、metadata 不可用、删除和追问覆盖路径执行安全重读，并替换对应旧 evidence，保持 path policy、脱敏、预算和 AbortSignal 语义。
 
 ## 3. Analysis and map integration
 

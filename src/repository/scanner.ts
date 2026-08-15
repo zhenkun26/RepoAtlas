@@ -4,7 +4,7 @@ import { createConfig } from '../config.ts'
 import { redactSecretLike, isSensitivePath } from '../safety/content-policy.ts'
 import { decideAction, auditDecision } from '../safety/policy-gate.ts'
 import { assertWorkspacePath, checkWorkspacePath } from '../safety/path-policy.ts'
-import type { AuditEvent, ReadResult, RepoAtlasConfig, ScanResult, ScannedFile, ToolAction } from '../types.ts'
+import type { AuditEvent, EvidenceFingerprint, ReadResult, RepoAtlasConfig, ScanResult, ScannedFile, ToolAction } from '../types.ts'
 
 export class RepositoryScanner {
   readonly config: RepoAtlasConfig
@@ -168,7 +168,8 @@ export class RepositoryScanner {
       try {
         const stat = await fs.stat(path.join(absoluteDir, entry.name))
         const kind = stat.size > this.config.maxFileBytes ? 'too-large' : 'text'
-        this.scanned.push({ relativePath, sizeBytes: stat.size, kind })
+        const fingerprint = createFingerprint(relativePath, stat)
+        this.scanned.push({ relativePath, sizeBytes: stat.size, kind, fingerprint })
         if (kind === 'too-large') this.skip(relativePath, 'file exceeds maxFileBytes')
       } catch (error) {
         this.scanned.push({ relativePath, sizeBytes: 0, kind: 'unreadable' })
@@ -209,6 +210,11 @@ export class RepositoryScanner {
     this.skipped.push({ path: relativePath, reason })
     this.audits.push({ auditId: `skip-${crypto.randomUUID()}`, timestamp: new Date().toISOString(), action: 'skip', status: 'skipped', path: relativePath, reason })
   }
+}
+
+function createFingerprint(relativePath: string, stat: { size: number; mtimeMs: number; ctimeMs: number }): EvidenceFingerprint | undefined {
+  if (![stat.size, stat.mtimeMs, stat.ctimeMs].every(Number.isFinite)) return undefined
+  return { relativePath, sizeBytes: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs }
 }
 
 function normalizeRelative(root: string, absolutePath: string): string {
