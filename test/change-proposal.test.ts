@@ -103,6 +103,11 @@ test('proposal lifecycle requires exact confirmation and releases a clean owned 
   assert.equal(confirmed.proposal?.patchApplied, false)
   assert.equal(confirmed.proposal?.commitCreated, false)
   assert.equal(confirmed.proposal?.pushPerformed, false)
+  assert.deepEqual(confirmed.proposal?.executionStatus, {
+    patch: 'patch-not-applied',
+    commit: 'commit-not-created',
+    push: 'push-not-performed',
+  })
   assert.equal(adapter.createCount, 1)
 
   const replay = await manager.confirm(pending.proposal?.proposalId ?? '', pending.proposal?.confirmationDigest ?? '')

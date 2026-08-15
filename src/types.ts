@@ -299,6 +299,12 @@ export interface ChangeProposalWorktree {
   baseRevision: string
 }
 
+export interface ChangeProposalExecutionStatus {
+  patch: 'patch-not-applied'
+  commit: 'commit-not-created'
+  push: 'push-not-performed'
+}
+
 export interface ChangeProposal {
   proposalId: string
   sessionId: string
@@ -314,6 +320,7 @@ export interface ChangeProposal {
   status: ChangeProposalStatus
   operationStatus: ChangeProposalOperationStatus
   expiresAt: string
+  executionStatus: ChangeProposalExecutionStatus
   patchApplied: false
   commitCreated: false
   pushPerformed: false

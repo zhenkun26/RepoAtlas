@@ -121,6 +121,11 @@ export class ChangeProposalManager {
       status: 'awaiting-confirmation',
       operationStatus: 'proposal',
       expiresAt: new Date(Date.now() + this.limits.expirationMs).toISOString(),
+      executionStatus: {
+        patch: 'patch-not-applied',
+        commit: 'commit-not-created',
+        push: 'push-not-performed',
+      },
       patchApplied: false,
       commitCreated: false,
       pushPerformed: false,
