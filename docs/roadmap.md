@@ -30,6 +30,6 @@
 18. v2.14（已完成，需独立 release 授权）：增加 proposed support policy、source-first 首次 release procedure、read-only `verify:release-preflight` 和 manual release-preflight workflow；preflight 只观察候选状态，不创建 tag、GitHub Release、npm publication、push 或 deployment。版权持有人确认、release notes 和实际 release 仍是人工 gate。
 19. v2.15（已完成）：优化开源项目展示，补充安全优先、证据驱动和 source-first 的项目描述、README landing 内容与 package description；不改变 runtime、npm 或 release side effect 边界。
 20. v2.16（已完成）：将 README 的主要评估、安装、安全、兼容性、分发和治理路径改为中英双语；共享命令、路径、链接和 revision，避免技术事实漂移。
-21. v2.17（已实现，clean candidate preflight 已通过，仍需独立 release 授权）：对齐下一次 source-first candidate `0.1.1`、不可变 `v0.1.0` 历史 tag、双语 release status、CHANGELOG、release checklist 和手动 GitHub About metadata handoff；不移动 tag、不创建 GitHub Release、不发布 npm、不访问网络。
+21. v2.17（已实现，`v0.1.1` source-first GitHub Release 已完成）：对齐 `0.1.1`、不可变 `v0.1.0` 历史 tag、双语 release status、CHANGELOG、release checklist 和手动 GitHub About metadata handoff；tag/Release 通过独立人工授权完成，RepoAtlas tooling 不自动执行；npm 仍未发布。
 
 每个版本都应先更新安全边界、预算、部分失败语义和验收 fixture，再扩展工具权限。v2.11 的 OpenSpec sync/archive/commit/push、v2.12 的 release baseline、v2.17 的 candidate alignment 与实际 tag/Release 操作仍是独立的审阅边界。

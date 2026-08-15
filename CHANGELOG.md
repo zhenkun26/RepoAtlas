@@ -1,12 +1,12 @@
 # Changelog
 
-All notable RepoAtlas changes will be documented here. The existing `v0.1.0` tag is an immutable historical source snapshot. The `[0.1.1]` section is the reviewed next source-first candidate until a maintainer separately authorizes a new tag and GitHub Release; neither section implies npm publication or a supported package version by itself.
+All notable RepoAtlas changes will be documented here. The existing `v0.1.0` tag is an immutable historical source snapshot. The `[0.1.1]` section records the completed source-first GitHub Release; neither section implies npm publication or a supported npm package by itself.
 
 ## [Unreleased]
 
-No user-facing changes after the `0.1.1` candidate boundary.
+No user-facing changes after the `0.1.1` release.
 
-## [0.1.1] - Unreleased candidate
+## [0.1.1] - 2026-08-15
 
 ### Added
 
@@ -16,9 +16,9 @@ No user-facing changes after the `0.1.1` candidate boundary.
 
 ### Distribution and release status
 
-- This candidate remains source-first and keeps `private: true`; it is not an npm publication or compiled distribution.
-- The candidate must use a distinct future tag and must not move or overwrite the existing `v0.1.0` tag.
-- A local preflight result is advisory evidence and does not create a tag, GitHub Release, npm publication, deployment, or support SLA.
+- This release remains source-first and keeps `private: true`; it is not an npm publication or compiled distribution.
+- The `v0.1.1` tag and [GitHub Release](https://github.com/zhenkun26/RepoAtlas/releases/tag/v0.1.1) point to the reviewed revision `3eb5c0c8c48373dd19a6e0317de8ffb26f0064bc`; the historical `v0.1.0` tag remains unchanged.
+- The local preflight passed before the manual release action; preflight itself does not create a tag, GitHub Release, npm publication, deployment, or support SLA.
 
 ## [0.1.0] - 2026-08-15
 
@@ -43,4 +43,4 @@ No user-facing changes after the `0.1.1` candidate boundary.
 
 ## Release policy
 
-The existing `v0.1.0` tag points to the historical commit `455dbb61d5cabe032e3497ba4d9eeb9c39584662` and must remain unchanged. The reviewed next candidate is `0.1.1` on the current reviewed `main` descendant; its exact revision is rechecked immediately before any separately authorized tag or GitHub Release. Package publication, compiled distribution, support policy, and version compatibility remain separate decisions tracked in [the roadmap](docs/roadmap.md) and [the release checklist](docs/release-checklist.md).
+The existing `v0.1.0` tag points to the historical commit `455dbb61d5cabe032e3497ba4d9eeb9c39584662` and remains unchanged. The source-first `v0.1.1` tag and [GitHub Release](https://github.com/zhenkun26/RepoAtlas/releases/tag/v0.1.1) were created for the reviewed commit `3eb5c0c8c48373dd19a6e0317de8ffb26f0064bc`. npm publication, compiled distribution, support policy, and future version compatibility remain separate decisions tracked in [the roadmap](docs/roadmap.md) and [the release checklist](docs/release-checklist.md).

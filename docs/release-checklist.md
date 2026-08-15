@@ -30,8 +30,8 @@ This checklist describes release readiness; it is not an instruction to publish,
 ## Candidate alignment
 
 - [x] Preserve the existing `v0.1.0` tag as immutable historical state at `455dbb61d5cabe032e3497ba4d9eeb9c39584662`.
-- [x] Select `0.1.1` as the next reviewed source-first candidate without creating or moving its tag.
-- [x] Align the package version, changelog candidate section, bilingual README release status, release process, and roadmap.
+- [x] Select `0.1.1` as the reviewed source-first release without creating or moving the historical `v0.1.0` tag.
+- [x] Align the package version, changelog release section, bilingual README release status, release process, and roadmap.
 - [x] Record the manual GitHub About description, homepage, and accurate topic handoff in [`docs/release-process.md`](release-process.md).
 
 ## Next source-first release
@@ -41,9 +41,9 @@ This checklist describes release readiness; it is not an instruction to publish,
 - [x] Document the proposed source-first support policy and manual release procedure; adoption remains a separate maintainer decision.
 - [x] Run `npm run verify:release-preflight` successfully on the final reviewed candidate; the clean candidate check passed before the evidence-record update.
 - [x] Create release notes from the changelog; the exact commit to be tagged is rechecked immediately before tagging.
-- [ ] Create the separate `v0.1.1` tag and GitHub Release only with explicit authorization; never move `v0.1.0`.
-- [ ] Publish or push only through the separately approved release procedure.
+- [x] Create the separate `v0.1.1` tag and GitHub Release through the authorized release procedure; never move `v0.1.0`. The release URL is <https://github.com/zhenkun26/RepoAtlas/releases/tag/v0.1.1>.
+- [x] Push the reviewed `main` revision and `v0.1.1` tag through the separately approved release procedure; npm publication remains out of scope.
 
 ## Explicit non-claims
 
-Until the unchecked release items above are resolved, RepoAtlas must not claim that the `0.1.1` candidate has a completed GitHub Release, public npm package, compiled distribution, adopted support SLA, or completed release operation. The existing `v0.1.0` tag is historical state, while the preflight remains candidate evidence and does not create release state.
+The source-first `v0.1.1` GitHub Release is complete. RepoAtlas must still not claim a public npm package, compiled distribution, or adopted support SLA. The existing `v0.1.0` tag is historical state, and the preflight was candidate evidence recorded before the manual release action; it did not create release state.

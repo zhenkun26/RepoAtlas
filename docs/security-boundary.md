@@ -110,7 +110,7 @@ v2.14 的公开 release 准备仍是 repository tooling，不是 RepoAtlas runti
 
 ## v2.17 public release alignment
 
-v2.17 只对齐 source-first release candidate 的本地版本、文档和人工 GitHub About metadata handoff。它将 `v0.1.0` 视为不可变历史 tag，并把 `0.1.1` 作为下一次未发布 candidate；repository tooling 不移动 tag、不创建 GitHub Release、不修改 GitHub metadata、不 publish npm、不 push，也不访问网络。`ready` 仍只表示本地 candidate evidence，不表示远程 release 或 deployment 已完成。
+v2.17 只对齐 source-first release candidate 的本地版本、文档和人工 GitHub About metadata handoff；在正式发布前，它将 `v0.1.0` 视为不可变历史 tag，并把 `0.1.1` 作为下一次未发布 candidate。随后经独立人工授权创建的 `v0.1.1` tag/Release 不属于 RepoAtlas tooling 的自动 side effect；tooling 仍不移动 tag、不创建 GitHub Release、不修改 GitHub metadata、不 publish npm、不 push，也不访问网络。`ready` 只表示发布前的本地 candidate evidence，不表示它本身完成远程 release 或 deployment。
 
 dirty worktree、active OpenSpec change、缺少 `origin/main`、HEAD drift、source-first/许可证/文档不一致、未完成的 pinned smoke/README recheck、版权持有人未确认或 release notes 未完成，都会保持 `blocked`。`ready` 只表示候选事实在检查时满足声明，不是授权、tag、GitHub Release、npm 包、部署或 support SLA。`.github/workflows/release-preflight.yml` 仅 `workflow_dispatch` 且 `contents: read`，可以安装依赖并运行质量门禁，但不含任何 release side effect。
 
