@@ -4,6 +4,10 @@ All notable RepoAtlas changes will be documented here. Until the first public ta
 
 ## [Unreleased]
 
+No unreleased user-facing changes.
+
+## [0.1.0] - 2026-08-15
+
 ### Added
 
 - v2.11 session-only `inspect-release` readiness observation for managed worktrees.
@@ -16,6 +20,12 @@ All notable RepoAtlas changes will be documented here. Until the first public ta
 - Documented the boundary between advisory lifecycle observations and authorized execution.
 - Added responsible disclosure guidance for boundary escapes and sensitive-data exposure.
 - Kept external Harness clone/install and compatibility execution outside the RepoAtlas runtime and default quality workflow.
+
+### Distribution and attribution
+
+- The first public version remains source-first and is not an npm publication or compiled distribution.
+- RepoAtlas is released under the MIT License; preserve the license notice and disclaimer.
+- Public references, integrations, documentation, and derivative projects should identify RepoAtlas / 代码星图 and link to the source repository.
 
 ## Release policy
 
