@@ -31,5 +31,8 @@
 19. v2.15（已完成）：优化开源项目展示，补充安全优先、证据驱动和 source-first 的项目描述、README landing 内容与 package description；不改变 runtime、npm 或 release side effect 边界。
 20. v2.16（已完成）：将 README 的主要评估、安装、安全、兼容性、分发和治理路径改为中英双语；共享命令、路径、链接和 revision，避免技术事实漂移。
 21. v2.17（已实现，`v0.1.1` source-first GitHub Release 已完成）：对齐 `0.1.1`、不可变 `v0.1.0` 历史 tag、双语 release status、CHANGELOG、release checklist 和手动 GitHub About metadata handoff；tag/Release 通过独立人工授权完成，RepoAtlas tooling 不自动执行；npm 仍未发布。
+22. v2.18（已实现）：从每次 Harness tool execution 的 exact live session 解析 absolute `header.cwd` 和 caller `AbortSignal`，按 session object 隔离 config、evidence cache、proposal manager、event history 与 advisory assessment；不再使用插件 mount 时的 `process.cwd()` 作为默认分析目录。缺失、取消、cwd 漂移或 configured-root 不匹配均在 I/O、Git adapter、approval 和 subprocess 之前 fail closed，不新增持久化、跨 session、网络或发布能力。
+23. v2.19（已实现，增强 live smoke 待独立 workflow 复核）：增加 exact-public-pin 官方声明编译合同，覆盖 ToolDefinition、ToolRunContext、Context、approval、Goal、sandbox-policy、sandbox 与 subprocess；sandbox policy 改用 `{session, mode}` 并在执行前复核 root/mode。手动 smoke 改为 ephemeral loopback Web boot、post-settlement readiness、HTTP probe 和 owned child termination；本地 ahead checkout 只产生 fail-closed 负向证据，不替代公开 pin workflow 成功记录。
+24. v2.20（已实现，未发布）：提供不依赖 Harness 源码 TS loader 的 built package/tarball 路径，生成 ignored `dist/` ESM/declarations，使用最小 `files`/conditional exports，并通过 offline packed-install 与 plain Node root/Harness import 验证。`private:true` 保留，本地 build/tarball readiness 不等于 `npm publish`、tag、GitHub Release 或 deployment，实际发布仍需独立授权。
 
-每个版本都应先更新安全边界、预算、部分失败语义和验收 fixture，再扩展工具权限。v2.11 的 OpenSpec sync/archive/commit/push、v2.12 的 release baseline、v2.17 的 candidate alignment 与实际 tag/Release 操作仍是独立的审阅边界。
+每个版本都应先更新安全边界、预算、部分失败语义和验收 fixture，再扩展工具权限。OpenSpec sync/archive、commit/push、npm publication 与实际 tag/Release 操作始终是独立的审阅边界。

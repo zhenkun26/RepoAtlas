@@ -104,6 +104,28 @@ v2.13 将 source-first 作为当前分发决策：`package.json` 继续 `private
 
 外部命令、网络 action、依赖安装、凭据缺失、revision drift 或输出不符合预期都会 fail closed 为“未验收”，不修改 RepoAtlas source workspace，不回滚或清理 Harness checkout，也不把 workflow 定义或 fake-context 测试升级为真实集成成功。MIT 允许使用、修改和再分发并要求保留 notice/disclaimer；项目另行请求公开引用标注 RepoAtlas / 代码星图并链接来源仓库，这两者继续保持分离。
 
+## v2.18 Harness session runtime correctness
+
+RepoAtlas 只从当前 tool invocation 的 `execution.agent.session.header.cwd` 选择分析和受控动作 workspace。该 cwd 必须是 absolute path；如果插件配置了 `workspaceRoot`，它只作为 exact restriction，不能替代缺失的 session cwd。插件 mount 时的 `process.cwd()` 不再充当用户 workspace，也不会按 cwd 字符串合并不同 Harness session。
+
+每个 exact live Harness session object 拥有独立的 cwd-derived config 与 `ChangeProposalManager`，因此 evidence cache、proposal registry、event history、patch/commit/landing 状态和 advisory assessments 均只在该 session 的内存中可见。即使两个 session 的 cwd 相同，它们也不能 list、inspect、confirm、reject、verify、commit、land 或 release 对方的 proposal id；不提供跨 session 恢复、迁移或持久化。
+
+workspace I/O 前必须同时存在 live execution、agent session、absolute cwd 和未预先取消的 caller `AbortSignal`。缺失上下文、configured-root mismatch、同一 session 的 cwd 漂移或 pre-aborted signal 均 fail closed，不扫描 repository、不查询 proposal adapter、不请求 approval、不调用 sandbox/subprocess。分析继续把 caller signal 传入有界扫描；该修复不新增网络、Shell、依赖安装、source workspace 写入、自动 patch、commit、push 或发布权限。
+
+## v2.19 Harness public API and live boot contract
+
+RepoAtlas 保留轻量 runtime facade，使普通测试与核心分析不依赖外部 Harness monorepo；但兼容性证据新增 exact-pin official declaration probe，直接约束 Harness ToolDefinition、ToolRunContext、Cordis Context、approval、Goal、sandbox-policy、sandbox 与 subprocess exports。probe 必须使用 manifest exact revision、clean tracked checkout 和已构建 declarations；moving branch、本地 descendant、dirty checkout、缺失 declaration 或类型漂移均 fail closed。
+
+受控 action 与 patch verification 只把当前 exact session 和 approved mode 传给官方 `sandboxPolicy.resolve({session, mode})`，不再伪造 caller-owned `workspaceRoot` 参数。返回 policy 仍必须与 RepoAtlas 已验证的 expected mode 和 absolute session/worktree root 完全一致；任何 drift 都在 sandbox confinement 和 subprocess spawn 前返回 `sandbox-unavailable`。
+
+增强 compatibility smoke 仍是显式开发/CI 工具，不属于 `src/` runtime。它只在 exact clean pin 下写 task-owned `DSH_HOME`，实际启动 ephemeral `127.0.0.1` Web server，限制 stdout/stderr、startup、HTTP 和 shutdown budget；只接受官方 post-settlement readiness URL，执行单次 loopback probe 后终止 owned child。非 loopback URL、early exit、activation failure、timeout、output overflow 或 HTTP failure 均不构成兼容证据。外部 checkout/install/build/boot 仍仅在 manual `workflow_dispatch`，不会授权插件联网、安装、发布或扩大 workspace 权限。
+
+## v2.20 built bundle distribution
+
+v2.20 只改变 repository artifact 边界，不扩大插件 runtime 权限。TypeScript build 将 `src/` 确定性 emit 为 ignored `dist/` ESM、declarations 和 maps，并把 relative `.ts` specifier 改写为 `.js`；package root 与 `./harness` exports 只指向 built files。`files` allowlist 只包含 `dist/`、bundle patch、README、LICENSE、NOTICE 和 npm 自动 package metadata，不包含 raw source、tests、examples、OpenSpec change、reference checkout 或缓存。
+
+`npm run verify:built-artifact` 在本地构建后，把 tarball、npm cache 和 consumer 放在 task-owned 临时目录，使用 `npm pack --ignore-scripts`、offline install 与 plain Node import 检查 root/Harness exports。它不允许 consumer prepare/tsx，不访问 registry、不 publish、不 tag、不创建 GitHub Release、不 push 或 deploy；成功只表示本地 artifact readiness。`package.json` 继续 `private:true`，实际 npm publication、version、registry provenance 和 credentials 仍需新的独立授权边界。
+
 ## v2.14 public release preflight
 
 v2.14 的公开 release 准备仍是 repository tooling，不是 RepoAtlas runtime。`npm run verify:release-preflight` 只读取 package/license/NOTICE、support/release 文档、release checklist、active OpenSpec 目录和本地 Git 状态；Git 调用使用固定 argv 与 `shell:false`，不 fetch、不 reset、不 clean、不 commit、不 tag、不 push，不访问网络，也不接收命令、路径或 approval 输入。它输出 bounded JSON 的 `ready`/`blocked`、blocker code、当前 revision 和 branch，并始终报告 `tagCreated:false`、`releaseCreated:false`、`publishPerformed:false`、`networkAccessed:false`。

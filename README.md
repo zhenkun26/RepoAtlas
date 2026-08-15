@@ -45,6 +45,7 @@ Repository analysis should be useful without becoming an unbounded automation su
 - `repo-atlas/harness` bundle loading through `cordis.patch.yml`.<br>通过 `cordis.patch.yml` 加载 `repo-atlas/harness` bundle。
 - Canonical Harness tool output schemas and text renderers.<br>提供符合 Harness 规范的工具输出 schema 和文本渲染器。
 - Real compatibility smoke support for the pinned Harness revision in [reference/harness-compatibility.json](reference/harness-compatibility.json).<br>支持针对 [reference/harness-compatibility.json](reference/harness-compatibility.json) 中 pinned Harness revision 的真实兼容性 smoke。
+- Official API compile contract plus bounded live Web boot/readiness/loopback probing; the live workflow remains a separate manual gate.<br>提供官方 API 编译合同与有界 Web 启动、readiness、loopback 探测；live workflow 仍是独立人工门禁。
 
 ## Quick start / 快速开始
 
@@ -56,13 +57,17 @@ Repository analysis should be useful without becoming an unbounded automation su
 
 ### Install from a source checkout / 从源码 checkout 安装
 
-RepoAtlas is currently distributed as a source/plugin bundle. Clone both repositories, install the Harness dependencies, and add the local RepoAtlas checkout:
+RepoAtlas is currently distributed from a checkout as a built-but-private plugin bundle. Clone both repositories, build RepoAtlas, install the Harness dependencies, and add the local RepoAtlas checkout:
 
-RepoAtlas 当前以 source/plugin bundle 方式分发。请先 clone 两个仓库、安装 Harness 依赖，再添加本地 RepoAtlas checkout：
+RepoAtlas 当前从 checkout 以 built-but-private plugin bundle 方式分发。请先 clone 两个仓库、构建 RepoAtlas、安装 Harness 依赖，再添加本地 RepoAtlas checkout：
 
 ```bash
 git clone https://github.com/zhenkun26/RepoAtlas.git
 git clone https://github.com/deepseek-ai/deepseek-harness.git
+
+cd /absolute/path/to/RepoAtlas
+npm ci
+npm run build
 
 cd /absolute/path/to/deepseek-harness
 pnpm install
@@ -126,6 +131,7 @@ These are separate states, not a promise that code has been generated, applied, 
 - CI quality matrix: **Node.js 22.x and 24.x**.<br>CI 质量矩阵：**Node.js 22.x 和 24.x**。
 - Pinned real Harness smoke: revision [`47f943859bef60e4160492346772ded9b24f765a`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a), Node.js 24.x, pnpm 11.7.0.<br>pinned 真实 Harness smoke：revision [`47f943859bef60e4160492346772ded9b24f765a`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a)、Node.js 24.x、pnpm 11.7.0。
 - The `master` branch is navigation context, not a compatibility guarantee; the exact revision in the manifest is the evidence contract.<br>`master` 分支仅用于导航，不构成兼容性保证；manifest 中的 exact revision 才是证据合同。
+- Local fake-context tests and API compile checks do not replace a reviewed successful live-boot workflow run.<br>本地 fake-context 测试和 API 编译检查不能替代经审阅且成功的 live-boot workflow run。
 - Support is best-effort and currently has no SLA. Security reports should follow [SECURITY.md](SECURITY.md).<br>当前支持为 best-effort，不提供 SLA；安全问题请按照 [SECURITY.md](SECURITY.md) 报告。
 
 Read the complete [support policy](docs/support-policy.md) and [Harness compatibility manifest](reference/harness-compatibility.json) before integrating RepoAtlas into another workflow.
@@ -134,17 +140,17 @@ Read the complete [support policy](docs/support-policy.md) and [Harness compatib
 
 ## Distribution and release status / 分发与发布状态
 
-RepoAtlas remains source-first:
+RepoAtlas is built locally but remains private and unpublished:
 
-RepoAtlas 继续采用 source-first：
+RepoAtlas 采用本地构建，但仍保持 private 且未发布：
 
 - `cordis.patch.yml` and the `dsh.bundle` package metadata define the supported Harness loading path.<br>`cordis.patch.yml` 和 package metadata 中的 `dsh.bundle` 定义受支持的 Harness 加载路径。
 - `package.json` intentionally keeps `private: true`.<br>`package.json` 有意保持 `private: true`。
-- `npm run verify:source-artifact` is a local packed-install evaluation; it is not an npm publication and does not create an ordinary Node consumer import contract.<br>`npm run verify:source-artifact` 只是本地 packed-install 评估，不是 npm 发布，也不建立普通 Node consumer import 合同。
-- No compiled `dist/` distribution is promised.<br>当前不承诺提供编译后的 `dist/` 分发包。
+- Package exports point to generated ESM and declarations under ignored `dist/`; raw `src/` is not packed.<br>package exports 指向 ignored `dist/` 下生成的 ESM 与 declarations；tarball 不包含原始 `src/`。
+- `npm run verify:built-artifact` builds, packs, installs offline, and imports both public entries locally; it is not an npm publication.<br>`npm run verify:built-artifact` 会在本地构建、打包、离线安装并 import 两个公开入口；它不是 npm 发布。
 - Git tags, GitHub Releases, and npm publication are separate release decisions. The current project documentation does not claim that an npm package exists.<br>Git tag、GitHub Release 和 npm publication 是相互独立的发布决策；当前项目文档不声称存在 npm 包。
 
-The current source-first release is `0.1.1`, available as a [GitHub Release](https://github.com/zhenkun26/RepoAtlas/releases/tag/v0.1.1). It points to reviewed revision `3eb5c0c8c48373dd19a6e0317de8ffb26f0064bc`; the immutable `v0.1.0` tag points to the earlier revision `455dbb61d5cabe032e3497ba4d9eeb9c39584662` and must not be moved or overwritten. This is a source/plugin-bundle release, not an npm package or compiled distribution.<br>当前 source-first 发布版本是 `0.1.1`，可通过 [GitHub Release](https://github.com/zhenkun26/RepoAtlas/releases/tag/v0.1.1) 获取。它对应已审阅的 revision `3eb5c0c8c48373dd19a6e0317de8ffb26f0064bc`；不可变的 `v0.1.0` tag 指向较早的 revision `455dbb61d5cabe032e3497ba4d9eeb9c39584662`，不得移动或覆盖。这是 source/plugin bundle 发布，不是 npm 包或编译产物。
+The existing `0.1.1` GitHub Release remains the earlier source-first snapshot. The current unreleased checkout can produce a verified built tarball, but no npm package or new GitHub Release has been published. The immutable `v0.1.0` and `v0.1.1` tags must not be moved.<br>现有 `0.1.1` GitHub Release 仍是较早的 source-first 快照。当前未发布 checkout 可以生成经验证的 built tarball，但尚未发布 npm 包或新的 GitHub Release；不可移动 `v0.1.0` 与 `v0.1.1` tag。
 
 The manual [release process](docs/release-process.md) and [release checklist](docs/release-checklist.md) distinguish candidate readiness from actual release state. A green preflight is advisory evidence; it does not create a tag, GitHub Release, npm publication, or deployment.
 
@@ -166,18 +172,19 @@ const report = generateReport(session)
 console.log(report.markdown)
 ```
 
-Direct API usage still follows the same evidence, path, sensitive-content, and budget policies. Importing the raw `.ts` entry point from an installed `node_modules` package is not part of the current support contract.
+Direct API usage still follows the same evidence, path, sensitive-content, and budget policies. The local packed-artifact contract supports plain-Node imports from built `dist/`; raw `.ts` package loading is not supported.
 
-直接 API 调用仍然遵守相同的证据、路径、敏感内容和预算策略。从已安装的 `node_modules` 包中直接 import 原始 `.ts` entry point 不属于当前支持合同。
+直接 API 调用仍然遵守相同的证据、路径、敏感内容和预算策略。本地 packed artifact 合同支持 plain Node 从 built `dist/` import；不支持原始 `.ts` package loading。
 
 ## Development and verification / 开发与验证
 
 ```bash
 npm ci
+npm run build
 npm run typecheck
 npm test
 npm run lint
-npm run verify:source-artifact
+npm run verify:built-artifact
 npm run validate:openspec
 npm run verify:release-preflight
 git diff --check

@@ -16,15 +16,17 @@ This checklist describes release readiness; it is not an instruction to publish,
 
 - [x] Local core API and plugin imports remain covered by the existing test suite.
 - [x] Fake-context Harness registration and action contract tests remain green.
-- [x] Add a reproducible clean-checkout and packed-install evaluation: default CI starts from a clean checkout and runs `npm run verify:source-artifact` on Node.js 22/24.
+- [x] Add a reproducible clean-checkout built-artifact evaluation: default CI builds, packs, installs offline, and imports both public entries with `npm run verify:built-artifact` on Node.js 22/24.
 - [x] Run a pinned real DeepSeek Harness smoke test and record the compatible revision: `47f943859bef60e4160492346772ded9b24f765a` with Node 24.x and pnpm 11.7.0.
 - [x] Recheck README installation instructions against the actual public Harness release at the pinned revision.
+- [x] Compile-check RepoAtlas public facades against official declarations from the exact Harness revision; a task-owned exact-pin checkout passed the v2.19 API probe.
+- [ ] Run and review the strengthened v2.19 live Web boot workflow; the earlier config/help smoke is historical evidence and does not satisfy the new activation contract by itself.
 
 ## Distribution decision
 
 - [x] Current posture is source-first: load the checkout through `cordis.patch.yml`; `private: true` remains enabled.
 - [x] v2.13 decision: remain a source/plugin bundle; local packed-install is diagnostic and does not enable npm publication or ordinary Node consumer imports.
-- [ ] If npm is chosen, define a build output, `exports`, `files` allowlist, package smoke test, and Node/Harness compatibility policy in a new OpenSpec change.
+- [x] Define build output, `exports`, `files` allowlist, offline package smoke, and Node/Harness compatibility policy in the v2.20 OpenSpec change; keep publication separately unauthorized.
 - [x] If source-first is retained, define the supported checkout/ref and upgrade guidance in the v2.13 OpenSpec change and `reference/harness-compatibility.json`.
 
 ## Candidate alignment
@@ -46,4 +48,4 @@ This checklist describes release readiness; it is not an instruction to publish,
 
 ## Explicit non-claims
 
-The source-first `v0.1.1` GitHub Release is complete. RepoAtlas must still not claim a public npm package, compiled distribution, or adopted support SLA. The existing `v0.1.0` tag is historical state, and the preflight was candidate evidence recorded before the manual release action; it did not create release state.
+The source-first `v0.1.1` GitHub Release is complete. The current checkout can produce a locally verified compiled tarball, but RepoAtlas must still not claim a public npm package, a published built release, or an adopted support SLA. The existing `v0.1.0` tag is historical state, and preflight/build evidence does not create remote release state.

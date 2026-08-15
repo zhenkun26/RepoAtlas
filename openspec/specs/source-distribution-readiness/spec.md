@@ -5,17 +5,15 @@ Define the source-first delivery and pinned external DeepSeek Harness compatibil
 ## Requirements
 ### Requirement: The repository SHALL retain a source-first distribution contract
 
-The repository MUST keep `package.json` `private: true`, license `MIT`, source entry points, and the `dsh.bundle.patch` declaration. It MUST state that a local packed artifact is diagnostic only and MUST NOT claim npm publication, compiled `dist/` distribution, or a support guarantee for arbitrary consumer versions.
+The repository MUST keep `package.json` `private: true`, license `MIT`, built `dist/` entry points, and the `dsh.bundle.patch` declaration. It MUST state that a local packed artifact is diagnostic only and MUST NOT claim npm publication or a support guarantee for arbitrary consumer versions.
 
 #### Scenario: A contributor evaluates the local artifact
-
-- **WHEN** a clean checkout runs `npm run verify:source-artifact`
-- **THEN** the command SHALL create a task-owned local tarball, install it offline into a task-owned consumer, inspect the installed metadata/source exports, and exit successfully without publishing or changing the checkout
+- **WHEN** a clean checkout runs `npm run verify:built-artifact`
+- **THEN** the command SHALL build locally, create a task-owned tarball, install it offline into a task-owned consumer, import the built root and Harness exports, and exit successfully without publishing or changing tracked checkout files
 
 #### Scenario: The source-first posture is inspected
-
 - **WHEN** a contributor reads package metadata, README, and release guidance
-- **THEN** they SHALL find `private: true`, the source checkout/plugin loading path, the local artifact limitation, and no claim of an npm package or compiled distribution
+- **THEN** they SHALL find `private: true`, built exports and allowlisted artifact contents, the local artifact limitation, and no claim that an npm package has been published
 
 ### Requirement: The compatibility target SHALL be pinned to a public Harness revision
 
@@ -33,17 +31,15 @@ The repository MUST contain a compatibility manifest naming the public DeepSeek 
 
 ### Requirement: The real Harness smoke SHALL be explicit, isolated, and bounded
 
-The real Harness smoke runner MUST derive the RepoAtlas root from its current working directory, require an explicit Harness checkout root, verify the exact manifest revision, use fixed `pnpm` argument vectors with `shell: false`, and isolate profile state under a task-owned temporary `DSH_HOME`. It MUST install the local RepoAtlas bundle into the `web` profile, inspect the composed config for `repo-atlas/harness`, and request Web help successfully.
+The real Harness smoke runner MUST derive the RepoAtlas root from its current working directory, require an explicit clean Harness checkout root, verify the exact manifest revision, use fixed `pnpm` argument vectors with `shell: false`, and isolate profile state under a task-owned temporary `DSH_HOME`. It MUST install the local RepoAtlas bundle into the `web` profile, inspect the composed config for `repo-atlas/harness`, compile-check the plugin against official public type declarations, start the Web profile on loopback with an ephemeral port, wait for post-settlement readiness, probe the live endpoint, and terminate the owned process. `--help`, config composition, or module syntax alone MUST NOT count as live compatibility evidence.
 
 #### Scenario: A pinned checkout loads the bundle
-
 - **WHEN** the manual compatibility workflow checks out the manifest revision, installs the locked Harness dependencies, and invokes the runner
-- **THEN** the runner SHALL verify the revision, add the local RepoAtlas bundle, observe `repo-atlas/harness` in the composed web profile, and complete `dsh web --help` successfully
+- **THEN** the runner SHALL verify the revision, add the local RepoAtlas bundle, observe `repo-atlas/harness` in config, pass the official API contract, observe live Web readiness, receive a successful bounded loopback response, and terminate its process successfully
 
 #### Scenario: The checkout or Harness command is unavailable
-
-- **WHEN** the Harness root is missing, the revision differs, dependencies are unavailable, or any fixed command exits nonzero
-- **THEN** the runner SHALL fail with bounded diagnostics and SHALL NOT claim readiness, alter the RepoAtlas checkout, or attempt rollback in the Harness checkout
+- **WHEN** the Harness root is missing or dirty, the revision differs, dependencies or official declarations are unavailable, plugin activation fails, readiness times out, the endpoint probe fails, or any fixed command exits nonzero
+- **THEN** the runner SHALL fail with bounded diagnostics, terminate only its owned process, and SHALL NOT claim readiness, alter the RepoAtlas checkout, attempt rollback in the Harness checkout, or access a non-loopback endpoint
 
 ### Requirement: External compatibility execution SHALL remain outside default runtime and quality authority
 

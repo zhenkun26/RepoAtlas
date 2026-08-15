@@ -29,11 +29,15 @@
 
 ### Requirement: The system SHALL fail closed at the sandbox boundary
 
-受控动作 MUST 通过 Harness 的 sandbox 能力包装精确 argv，并 MUST 通过 Harness 的 subprocess 能力管理进程树、超时和终止。沙箱服务不可用、只提供部分但 recipe 要求完整约束、或包装失败时，系统 MUST 拒绝执行，绝不降级为未隔离运行。
+受控动作 MUST 通过 Harness 的 sandbox 能力包装精确 argv，并 MUST 通过 Harness 的 subprocess 能力管理进程树、超时和终止。RepoAtlas MUST 使用当前调用的 exact session 与已批准 recipe mode 调用官方 sandbox-policy resolver，并在执行前验证返回的 mode 与 absolute workspace root 完全匹配当前 session runtime。沙箱服务不可用、只提供部分但 recipe 要求完整约束、返回 root/mode 漂移、或包装失败时，系统 MUST 拒绝执行，绝不降级为未隔离运行。
 
 #### Scenario: Sandbox is unavailable
 - **WHEN** 当前 Harness session 没有可用的 sandbox provider
 - **THEN** 系统 SHALL 返回可区分的沙箱不可用结果，且 SHALL 不启动原始 argv
+
+#### Scenario: Resolved session policy drifts
+- **WHEN** Harness sandbox policy 为当前 session 返回不同 mode、非 absolute root 或与 RepoAtlas session workspace 不同的 root
+- **THEN** 系统 SHALL fail closed，且 SHALL 不调用 sandbox wrapper 或 subprocess
 
 #### Scenario: Process exceeds the deadline
 - **WHEN** 动作超过 recipe 的最大时长
@@ -62,3 +66,15 @@
 #### Scenario: Action is denied or fails
 - **WHEN** Policy Gate 拒绝动作、沙箱拒绝动作或进程以非零状态退出
 - **THEN** 系统 SHALL 返回明确失败状态，保留拒绝/失败原因，并 SHALL 不伪装成分析成功
+
+### Requirement: The system SHALL bind controlled actions to the calling session workspace
+
+The controlled-action adapter MUST derive its execution root from the current Harness session cwd for every call and MUST require the Harness sandbox policy to resolve the same root. Plugin startup cwd and model-supplied values MUST NOT select or widen the execution root.
+
+#### Scenario: Harness runs outside the user's workspace
+- **WHEN** the Harness process cwd differs from the calling session cwd and an enabled bounded recipe is approved
+- **THEN** path validation, sandbox policy, and subprocess cwd SHALL use the calling session workspace and SHALL not use the Harness checkout
+
+#### Scenario: Sandbox policy disagrees with the session root
+- **WHEN** the resolved sandbox workspace differs from the canonical calling session cwd
+- **THEN** the action SHALL fail closed before subprocess spawn

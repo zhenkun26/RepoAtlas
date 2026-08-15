@@ -1,33 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { runControlledAction, type ControlledActionRuntime, type ControlledActionResult, type ControlledActionSubprocess, type ControlledActionSandbox, type ControlledActionPolicyResolver } from '../actions/runtime.ts'
-import type { ControlledActionSandboxMode, RepoAtlasConfig } from '../types.ts'
+import type { RepoAtlasConfig } from '../types.ts'
 import type { ChangeProposalVerification, ChangeProposalVerificationStatus } from '../types.ts'
 import type { ChangeProposalVerificationExecution, ChangeProposalVerificationRunner } from '../repository/change-proposal.ts'
-import type { HarnessAgent, HarnessPluginContext } from './public.ts'
-
-type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
-
-interface HarnessApprovalService {
-  request(request: {
-    agent: HarnessAgent
-    toolName: string
-    callId?: string
-    reason?: string
-    signal?: AbortSignal
-  }): Promise<ApprovalOutcome>
-}
-
-interface HarnessGoalService {
-  get(agent: HarnessAgent): { phase: 'active' | 'paused' | 'blocked' | 'complete'; activation: 'armed' | 'disarmed' } | undefined
-}
-
-interface HarnessSandboxPolicyService {
-  resolve(request: { mode: ControlledActionSandboxMode; session?: { header?: { cwd?: string } }; workspaceRoot?: string }): {
-    mode: string
-    workspaceRoot: string
-    sessionId?: string
-  }
-}
+import type { HarnessAgent, HarnessApprovalService, HarnessGoalService, HarnessPluginContext, HarnessSandboxPolicyService } from './public.ts'
 
 export function createChangeProposalVerificationRunner(config: RepoAtlasConfig, ctx: HarnessPluginContext): ChangeProposalVerificationRunner {
   return {
@@ -135,7 +111,7 @@ function createControlledActionRuntime(ctx: HarnessPluginContext, execution: Cha
   const sandboxPolicy = ctx.get?.<HarnessSandboxPolicyService>('sandboxPolicy')
   const policy: ControlledActionPolicyResolver | undefined = sandboxPolicy === undefined ? undefined : {
     resolve(request) {
-      const resolved = sandboxPolicy.resolve({ mode: request.mode, session: execution?.agent?.session, workspaceRoot: request.workspaceRoot })
+      const resolved = sandboxPolicy.resolve({ mode: request.mode, session: execution?.agent?.session })
       if (resolved.mode !== 'read-only' && resolved.mode !== 'workspace-write') throw new Error('unsupported sandbox mode returned by Harness')
       return { mode: resolved.mode, workspaceRoot: resolved.workspaceRoot, sessionId: resolved.sessionId }
     },

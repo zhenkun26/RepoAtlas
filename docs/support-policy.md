@@ -1,10 +1,10 @@
 # Proposed support policy
 
-This is the proposed support baseline for the first source-first public release. It becomes an adopted project commitment only when a maintainer explicitly approves it with the release decision.
+This is the proposed support baseline for the built-but-private RepoAtlas bundle. It becomes an adopted project commitment only when a maintainer explicitly approves it with a release decision.
 
 ## Supported baseline
 
-- RepoAtlas is loaded from a reviewed source checkout through `cordis.patch.yml`; `package.json` remains `private: true` and no npm package or compiled `dist/` distribution is promised.
+- RepoAtlas is built from a reviewed checkout and loaded through `cordis.patch.yml`; `package.json` remains `private: true`, generated `dist/` is locally verifiable, and no npm publication is claimed.
 - RepoAtlas local checks support Node.js 22 or newer. The repository quality workflow covers Node.js 22 and 24.
 - Real DeepSeek Harness compatibility is pinned to the exact revision in [`reference/harness-compatibility.json`](../reference/harness-compatibility.json): `47f943859bef60e4160492346772ded9b24f765a`, with Node 24.x and pnpm 11.7.0.
 - Public references, integrations, and redistributed copies should identify **RepoAtlas / 代码星图** and link <https://github.com/zhenkun26/RepoAtlas>. Redistribution retains the MIT notice and disclaimer.
@@ -13,7 +13,7 @@ This is the proposed support baseline for the first source-first public release.
 
 - Node.js versions below 22.
 - Arbitrary or moving Harness branches, private forks, or compatibility revisions not covered by a reviewed smoke run.
-- Ordinary npm consumer imports of RepoAtlas's raw TypeScript entry points.
+- Raw TypeScript package imports, install-time consumer compilation, or npm registry availability; only the local built-tarball import contract is currently verified.
 - An uptime, response-time, maintenance, or supported-version SLA.
 
 ## Issues and security

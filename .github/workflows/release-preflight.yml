@@ -35,7 +35,7 @@ jobs:
         run: npm run lint
 
       - name: Verify local source artifact
-        run: npm run verify:source-artifact
+        run: npm run verify:built-artifact
 
       - name: Validate OpenSpec specs
         run: npx --yes @fission-ai/openspec@1.7.0 validate --all --strict --no-interactive

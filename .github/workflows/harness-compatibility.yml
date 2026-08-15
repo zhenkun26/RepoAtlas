@@ -40,6 +40,16 @@ jobs:
         working-directory: harness
         run: pnpm install --frozen-lockfile
 
+      - name: Install RepoAtlas dependencies
+        run: npm ci
+
+      - name: Build RepoAtlas
+        run: npm run build
+
+      - name: Build pinned Harness host declarations
+        working-directory: harness
+        run: pnpm build:lib:host
+
       - name: Run RepoAtlas compatibility smoke
         env:
           REPO_ATLAS_HARNESS_ROOT: ${{ github.workspace }}/harness

@@ -7,22 +7,122 @@ import { apply } from '../src/harness/plugin.ts'
 import { createChangeProposalVerificationRunner } from '../src/harness/change-proposal-verification.ts'
 import { createChangeProposalCommitAuthorizer } from '../src/harness/change-proposal-commit.ts'
 import { createChangeProposalLandingAuthorizer } from '../src/harness/change-proposal-landing.ts'
+import { HarnessSessionRuntimeRegistry } from '../src/harness/session-runtime.ts'
 import { createConfig } from '../src/config.ts'
+import type { HarnessSession, HarnessTool, HarnessToolExecution } from '../src/harness/public.ts'
 
-test('Harness adapter registers read-only analysis and session-only proposal tools', async () => {
-  const registered: Array<{
-    name: string
-    parameters: Record<string, unknown>
-    output: { schema: Record<string, unknown>; render(args: unknown, value: unknown): Array<{ type: 'text'; text: string }> }
-    execute(input: unknown): Promise<unknown>
-  }> = []
-  const logs: string[] = []
-  apply({ tools: { register: (tool) => registered.push(tool) }, logger: { info: (message) => logs.push(message), warn: () => undefined } }, { workspaceRoot: path.join(process.cwd(), 'test', 'fixtures', 'complete-repo') })
-  assert.equal(registered.length, 2)
-  const analysis = registered.find((tool) => tool.name === 'repo_atlas_analyze')
-  const proposal = registered.find((tool) => tool.name === 'repo_atlas_change_proposal')
+function harnessExecution(workspaceRoot: string, session: HarnessSession = { header: { cwd: workspaceRoot } }, callId = 'repo-atlas-test-call'): HarnessToolExecution {
+  return { callId, agent: { session }, signal: new AbortController().signal }
+}
+
+function registeredTools(pluginConfig: Parameters<typeof apply>[1] = {}): HarnessTool[] {
+  const tools: HarnessTool[] = []
+  apply({ tools: { register: (tool) => tools.push(tool) } }, pluginConfig)
+  return tools
+}
+
+test('analysis follows each calling Harness session cwd', async () => {
+  const completeRoot = path.join(process.cwd(), 'test', 'fixtures', 'complete-repo')
+  const sensitiveRoot = path.join(process.cwd(), 'test', 'fixtures', 'sensitive-repo')
+  const analysis = registeredTools().find((tool) => tool.name === 'repo_atlas_analyze')
+  assert.ok(analysis)
+
+  const complete = await analysis.execute(
+    { start: 'direct', goal: { intent: 'onboarding' } },
+    harnessExecution(completeRoot),
+  ) as { report?: { atlas: { project: { name: string }; evidence: Array<{ sourcePath: string; status: string }> } } }
+  const sensitive = await analysis.execute(
+    { start: 'direct', goal: { intent: 'onboarding' } },
+    harnessExecution(sensitiveRoot),
+  ) as { report?: { atlas: { project: { name: string }; evidence: Array<{ sourcePath: string; status: string }> } } }
+
+  assert.equal(complete.report?.atlas.project.name, 'fixture-app')
+  assert.equal(sensitive.report?.atlas.project.name, 'sensitive-repo')
+  assert.ok(complete.report?.atlas.evidence.some((item) => item.sourcePath === 'package.json'))
+  assert.ok(sensitive.report?.atlas.evidence.some((item) => item.sourcePath === 'package.json' && item.status === 'read-failed'))
+  assert.ok(sensitive.report?.atlas.evidence.every((item) => !item.sourcePath.startsWith('src/')))
+})
+
+test('proposal state is isolated by exact Harness session object even at the same cwd', async () => {
+  const workspaceRoot = path.join(process.cwd(), 'test', 'fixtures', 'complete-repo')
+  const sessionA: HarnessSession = { header: { cwd: workspaceRoot } }
+  const sessionB: HarnessSession = { header: { cwd: workspaceRoot } }
+  const tools = registeredTools()
+  const analysis = tools.find((tool) => tool.name === 'repo_atlas_analyze')
+  const proposal = tools.find((tool) => tool.name === 'repo_atlas_change_proposal')
   assert.ok(analysis)
   assert.ok(proposal)
+
+  const analyzed = await analysis.execute(
+    { start: 'direct', goal: { intent: 'onboarding' } },
+    harnessExecution(workspaceRoot, sessionA, 'analysis-a'),
+  ) as { report?: { sessionId: string } }
+  const prepared = await proposal.execute({
+    action: 'prepare',
+    sessionId: analyzed.report?.sessionId,
+    intent: 'prove exact session isolation',
+    targets: [{ relativePath: 'src/index.ts', operation: 'modify' }],
+  }, harnessExecution(workspaceRoot, sessionA, 'proposal-a')) as { proposal?: { proposalId: string } }
+  assert.ok(prepared.proposal?.proposalId)
+
+  const ownerList = await proposal.execute(
+    { action: 'list' },
+    harnessExecution(workspaceRoot, sessionA, 'list-a'),
+  ) as { total: number }
+  const otherList = await proposal.execute(
+    { action: 'list' },
+    harnessExecution(workspaceRoot, sessionB, 'list-b'),
+  ) as { total: number }
+  const otherInspect = await proposal.execute(
+    { action: 'inspect', proposalId: prepared.proposal?.proposalId },
+    harnessExecution(workspaceRoot, sessionB, 'inspect-b'),
+  ) as { status: string }
+
+  assert.equal(ownerList.total, 1)
+  assert.equal(otherList.total, 0)
+  assert.equal(otherInspect.status, 'blocked')
+})
+
+test('session runtime resolution fails closed for missing, invalid, mismatched, and cancelled invocation context', () => {
+  const workspaceRoot = path.join(process.cwd(), 'test', 'fixtures', 'complete-repo')
+  const otherRoot = path.join(process.cwd(), 'test', 'fixtures', 'sensitive-repo')
+  const registry = new HarnessSessionRuntimeRegistry({ workspaceRoot })
+
+  assert.equal(registry.resolve(undefined).ok, false)
+  assert.equal(registry.resolve({ signal: new AbortController().signal }).ok, false)
+  assert.equal(registry.resolve({ agent: { session: { header: { cwd: 'relative/path' } } }, signal: new AbortController().signal }).ok, false)
+  assert.equal(registry.resolve(harnessExecution(otherRoot)).ok, false)
+  assert.equal(registry.resolve({
+    agent: { session: { header: { cwd: workspaceRoot } } },
+    signal: AbortSignal.abort(),
+  }).ok, false)
+})
+
+test('pre-aborted analysis is blocked before repository work starts', async () => {
+  const workspaceRoot = path.join(process.cwd(), 'test', 'fixtures', 'complete-repo')
+  const analysis = registeredTools({ workspaceRoot }).find((tool) => tool.name === 'repo_atlas_analyze')
+  assert.ok(analysis)
+  const result = await analysis.execute(
+    { start: 'direct', goal: { intent: 'onboarding' } },
+    { agent: { session: { header: { cwd: workspaceRoot } } }, signal: AbortSignal.abort() },
+  ) as { blocked?: { reason: string }; report?: unknown }
+  assert.match(result.blocked?.reason ?? '', /cancelled/)
+  assert.equal(result.report, undefined)
+})
+
+test('Harness adapter registers read-only analysis and session-only proposal tools', async () => {
+  const registered: HarnessTool[] = []
+  const logs: string[] = []
+  const workspaceRoot = path.join(process.cwd(), 'test', 'fixtures', 'complete-repo')
+  const execution = harnessExecution(workspaceRoot)
+  apply({ tools: { register: (tool) => registered.push(tool) }, logger: { info: (message) => logs.push(message), warn: () => undefined } }, { workspaceRoot })
+  assert.equal(registered.length, 2)
+  const analysisTool = registered.find((tool) => tool.name === 'repo_atlas_analyze')
+  const proposalTool = registered.find((tool) => tool.name === 'repo_atlas_change_proposal')
+  assert.ok(analysisTool)
+  assert.ok(proposalTool)
+  const analysis = { ...analysisTool, execute: (input: unknown) => analysisTool.execute(input, execution) }
+  const proposal = { ...proposalTool, execute: (input: unknown) => proposalTool.execute(input, execution) }
   assert.match(JSON.stringify(proposal.parameters), /prepare-patch/)
   assert.match(JSON.stringify(proposal.parameters), /review-patch/)
   assert.match(JSON.stringify(proposal.parameters), /export-patch/)
@@ -216,7 +316,7 @@ test('patch verification runner reuses Harness approval and executes only at the
   const agent = { session: { header: { cwd: workspaceRoot } } }
   const isolatedRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'repo-atlas-verify-'))
   let approvalRequest: { toolName: string; callId?: string; reason?: string } | undefined
-  let resolvedRoot = ''
+  let policyRequest: { mode?: string; session?: unknown } | undefined
   let spawnCount = 0
   const services: Record<string, unknown> = {
     goals: { get: () => ({ phase: 'active', activation: 'armed' }) },
@@ -227,9 +327,9 @@ test('patch verification runner reuses Harness approval and executes only at the
       },
     },
     sandboxPolicy: {
-      resolve: ({ mode, workspaceRoot: requestedRoot }: { mode: 'read-only' | 'workspace-write'; workspaceRoot?: string }) => {
-        resolvedRoot = requestedRoot ?? ''
-        return { mode, workspaceRoot: requestedRoot ?? '' }
+      resolve: (request: { mode?: 'read-only' | 'workspace-write'; session?: unknown }) => {
+        policyRequest = request
+        return { mode: request.mode, workspaceRoot: isolatedRoot }
       },
     },
     sandbox: { confine: (argv: readonly string[]) => ({ argv: [...argv], enforcement: 'full', denialSignatures: [], runnerFailureRules: [] }) },
@@ -257,7 +357,7 @@ test('patch verification runner reuses Harness approval and executes only at the
   })
   assert.equal(result.status, 'passed')
   assert.equal(result.stdout, 'verified')
-  assert.equal(resolvedRoot, isolatedRoot)
+  assert.deepEqual(policyRequest, { mode: 'read-only', session: agent.session })
   assert.equal(spawnCount, 1)
   assert.equal(approvalRequest?.toolName, 'repo_atlas_change_proposal')
   assert.equal(approvalRequest?.callId, 'verify-call')
@@ -299,13 +399,14 @@ test('patch verification runner rejects writable recipes before approval or subp
 })
 
 test('registered tool keeps the clarification gate and produces a report after direct start', async () => {
-  const registered: Array<{ name: string; execute(input: unknown): Promise<unknown> }> = []
+  const registered: HarnessTool[] = []
+  const workspaceRoot = path.join(process.cwd(), 'test', 'fixtures', 'complete-repo')
   apply({ tools: { register: (registeredTool) => { registered.push(registeredTool) } } }, {
-    workspaceRoot: path.join(process.cwd(), 'test', 'fixtures', 'complete-repo'),
+    workspaceRoot,
   })
   const tool = registered.find((candidate) => candidate.name === 'repo_atlas_analyze')
   assert.ok(tool)
-  const result = await tool.execute({ start: 'direct', goal: { intent: 'onboarding' } }) as { policy: string; report?: { markdown?: string } }
+  const result = await tool.execute({ start: 'direct', goal: { intent: 'onboarding' } }, harnessExecution(workspaceRoot)) as { policy: string; report?: { markdown?: string } }
   assert.equal(result.policy, 'readonly')
   assert.match(result.report?.markdown ?? '', /RepoAtlas/)
 })
@@ -321,9 +422,10 @@ test('enabled controlled action tool uses host Goal and one-time Harness approva
     maxOutputBytes: 32_000,
     enabled: true,
   }
-  const registered: Array<{ name: string; execute(input: unknown, execution?: { callId?: string; agent?: { session: { header?: { cwd?: string } } }; signal: AbortSignal }): Promise<unknown> }> = []
+  const registered: HarnessTool[] = []
   const agent = { session: { header: { cwd: workspaceRoot } } }
   let approvalRequest: { toolName: string; callId?: string; reason?: string } | undefined
+  let policyRequest: { mode?: string; session?: unknown } | undefined
   let spawnCount = 0
   const services: Record<string, unknown> = {
     goals: { get: () => ({ phase: 'active', activation: 'armed' }) },
@@ -333,7 +435,12 @@ test('enabled controlled action tool uses host Goal and one-time Harness approva
         return 'allowed-once'
       },
     },
-    sandboxPolicy: { resolve: ({ mode }: { mode: 'read-only' | 'workspace-write' }) => ({ mode, workspaceRoot }) },
+    sandboxPolicy: {
+      resolve: (request: { mode?: 'read-only' | 'workspace-write'; session?: unknown }) => {
+        policyRequest = request
+        return { mode: request.mode, workspaceRoot }
+      },
+    },
     sandbox: { confine: (argv: readonly string[]) => ({ argv: [...argv], enforcement: 'full', denialSignatures: [], runnerFailureRules: [] }) },
     subprocess: {
       spawn: () => {
@@ -360,6 +467,42 @@ test('enabled controlled action tool uses host Goal and one-time Harness approva
   assert.equal(approvalRequest?.toolName, 'repo_atlas_controlled_action')
   assert.equal(approvalRequest?.callId, 'call-1')
   assert.match(approvalRequest?.reason ?? '', /test.*src.*read-only/)
+  assert.deepEqual(policyRequest, { mode: 'read-only', session: agent.session })
+})
+
+test('controlled action tool rejects Harness sandbox policy root drift before confinement or spawn', async () => {
+  const workspaceRoot = path.join(process.cwd(), 'test', 'fixtures', 'complete-repo')
+  const otherRoot = path.join(process.cwd(), 'test', 'fixtures', 'sensitive-repo')
+  let confineCount = 0
+  let spawnCount = 0
+  const registered: HarnessTool[] = []
+  const services: Record<string, unknown> = {
+    goals: { get: () => ({ phase: 'active', activation: 'armed' }) },
+    approval: { request: async () => 'allowed-once' },
+    sandboxPolicy: { resolve: () => ({ mode: 'read-only', workspaceRoot: otherRoot }) },
+    sandbox: { confine: () => { confineCount += 1; throw new Error('must not confine') } },
+    subprocess: { spawn: () => { spawnCount += 1; throw new Error('must not spawn') } },
+  }
+  apply({
+    tools: { register: (tool) => registered.push(tool) },
+    get: <T>(name: string) => services[name] as T | undefined,
+  }, {
+    workspaceRoot,
+    controlledActions: {
+      enabled: true,
+      recipes: [{ id: 'test', command: 'npm', args: ['test'], sandboxMode: 'read-only', timeoutMs: 30_000, maxOutputBytes: 32_000, enabled: true }],
+    },
+  })
+  const action = registered.find((tool) => tool.name === 'repo_atlas_controlled_action')
+  assert.ok(action)
+  const result = await action.execute(
+    { recipeId: 'test' },
+    harnessExecution(workspaceRoot),
+  ) as { status: string; reason: string }
+  assert.equal(result.status, 'sandbox-unavailable')
+  assert.match(result.reason, /workspace does not match/)
+  assert.equal(confineCount, 0)
+  assert.equal(spawnCount, 0)
 })
 
 test('controlled action tool rejects an unknown recipe before asking for approval', async () => {
@@ -373,7 +516,7 @@ test('controlled action tool rejects an unknown recipe before asking for approva
     sandbox: { confine: (argv: readonly string[]) => ({ argv: [...argv], enforcement: 'full', denialSignatures: [], runnerFailureRules: [] }) },
     subprocess: { spawn: () => { spawnCount += 1; throw new Error('must not spawn') } },
   }
-  const registered: Array<{ name: string; execute(input: unknown, execution?: { callId?: string; agent?: { session: { header?: { cwd?: string } } }; signal: AbortSignal }): Promise<unknown> }> = []
+  const registered: HarnessTool[] = []
   apply({
     tools: { register: (tool) => registered.push(tool) },
     get: <T>(name: string) => services[name] as T | undefined,
@@ -411,7 +554,7 @@ test('controlled action tool denies without a host Goal and does not ask approva
     sandbox: { confine: (argv: readonly string[]) => ({ argv: [...argv], enforcement: 'full', denialSignatures: [], runnerFailureRules: [] }) },
     subprocess: { spawn: () => { spawnCount += 1; throw new Error('must not spawn') } },
   }
-  const registered: Array<{ name: string; execute(input: unknown, execution?: { callId?: string; agent?: { session: { header?: { cwd?: string } } }; signal: AbortSignal }): Promise<unknown> }> = []
+  const registered: HarnessTool[] = []
   apply({
     tools: { register: (tool) => registered.push(tool) },
     get: <T>(name: string) => services[name] as T | undefined,

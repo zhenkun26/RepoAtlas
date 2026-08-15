@@ -5,17 +5,15 @@ Define the repository-level contract for a source-first public release baseline.
 ## Requirements
 ### Requirement: The repository SHALL declare a source-first distribution posture
 
-The repository MUST declare an explicit license, package license metadata, supported Node.js baseline, source entry points, and the fact that npm publication and compiled distribution are not yet enabled. README and release checklist MUST provide a reproducible local validation path and MUST NOT describe a package publication or release tag that does not exist.
+The repository MUST declare an explicit license, package license metadata, supported Node.js baseline, built ESM/declaration entry points, an explicit package `files` allowlist, and the fact that npm publication is not enabled. README and release checklist MUST provide a reproducible local built-artifact validation path and MUST NOT describe an npm publication or new release tag that does not exist.
 
 #### Scenario: A clean checkout can discover the supported local path
-
 - **WHEN** a contributor reads the root README and package metadata
-- **THEN** they SHALL find Node.js 22+, `npm ci`, the test/lint/typecheck commands, the OpenSpec validation command, and the source-first Harness plugin installation path
+- **THEN** they SHALL find Node.js 22+, `npm ci`, build/test/lint/typecheck commands, strict OpenSpec validation, the built-artifact verification, and the Harness bundle installation path
 
 #### Scenario: The repository does not imply an npm release
-
-- **WHEN** a contributor inspects `package.json` and the release checklist before the distribution decision
-- **THEN** `private` SHALL remain `true`, no compiled `dist/` contract SHALL be claimed, and npm publication SHALL be listed as a follow-up rather than a completed capability
+- **WHEN** a contributor inspects `package.json` and the release checklist
+- **THEN** `private` SHALL remain `true`, exports SHALL point to allowlisted `dist/` files, and npm publication SHALL remain a separately authorized follow-up rather than a completed capability
 
 ### Requirement: The repository SHALL provide public governance and security guidance
 

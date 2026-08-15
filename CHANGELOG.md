@@ -4,7 +4,18 @@ All notable RepoAtlas changes will be documented here. The existing `v0.1.0` tag
 
 ## [Unreleased]
 
-No user-facing changes after the `0.1.1` release.
+### Changed
+
+- v2.18 resolves the analysis workspace from each live Harness invocation, forwards its cancellation signal, and owns proposal state by the exact Harness session object instead of plugin mount cwd.
+- v2.19 adds an official public-API type contract at the exact Harness pin, aligns sandbox policy with `{ session, mode }`, and upgrades the manual smoke to a bounded live Web boot and loopback probe.
+- v2.20 adds deterministic ESM/declaration output, built package exports, a minimal files allowlist, and offline installed-package imports for both the root and Harness entry.
+
+### Security
+
+- Missing execution, agent session, absolute session cwd, cancellation signal, configured-root match, or stable per-session cwd now fails closed before repository or lifecycle access.
+- Evidence caches, proposal registries, event histories, and preflight/readiness observations remain in-memory and isolated to their owning Harness session.
+- Ahead, dirty, declaration-missing, activation-failing, non-loopback, and readiness-timeout Harness checks fail closed before compatibility is claimed; the external build/boot remains manual and outside plugin runtime authority.
+- The built artifact remains `private:true`; local build/pack verification performs no npm publication, tag, release, push, deployment, or registry access.
 
 ## [0.1.1] - 2026-08-15
 

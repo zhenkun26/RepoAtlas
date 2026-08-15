@@ -1,8 +1,14 @@
 import type { ChangeProposalRequest } from '../types.ts'
-import { ChangeProposalManager, type ChangeProposalCommitAuthorizer, type ChangeProposalLandingAuthorizer, type ChangeProposalVerificationRunner } from '../repository/change-proposal.ts'
+import type { ChangeProposalCommitAuthorizer, ChangeProposalLandingAuthorizer, ChangeProposalVerificationRunner } from '../repository/change-proposal.ts'
 import type { HarnessTool, HarnessToolExecution } from './public.ts'
+import type { HarnessSessionRuntime, HarnessSessionRuntimeResolution } from './session-runtime.ts'
 
-export function createChangeProposalTool(manager: ChangeProposalManager, verificationRunner?: ChangeProposalVerificationRunner, commitAuthorizer?: ChangeProposalCommitAuthorizer, landingAuthorizer?: ChangeProposalLandingAuthorizer): HarnessTool {
+export function createChangeProposalTool(
+  resolveRuntime: (execution: HarnessToolExecution | undefined) => HarnessSessionRuntimeResolution,
+  createVerificationRunner: (runtime: HarnessSessionRuntime) => ChangeProposalVerificationRunner | undefined,
+  commitAuthorizer?: ChangeProposalCommitAuthorizer,
+  landingAuthorizer?: ChangeProposalLandingAuthorizer,
+): HarnessTool {
   return {
     name: 'repo_atlas_change_proposal',
     description: '查询、列举、实时检查、landing/release preflight、准备、审阅、导出、确认、拒绝或释放当前 session 的隔离代码变更提案；支持显式确认后将有界补丁应用到隔离 worktree、创建本地 detached-worktree commit，并可在 Harness 审批后 fast-forward 落地到 source workspace；不会解决冲突、访问 remote 或推送。',
@@ -36,9 +42,13 @@ export function createChangeProposalTool(manager: ChangeProposalManager, verific
         text: JSON.stringify(value, null, 2),
       }],
     },
-    async execute(input: unknown, execution?: HarnessToolExecution) {
+    async execute(input: unknown, execution: HarnessToolExecution) {
+      const resolved = resolveRuntime(execution)
+      if (!resolved.ok) return { status: 'blocked', operationStatus: 'blocked', reason: resolved.reason }
+      const manager = resolved.runtime.proposalManager
+      const verificationRunner = createVerificationRunner(resolved.runtime)
       const request = proposalInput(input)
-      const signal = execution?.signal ?? new AbortController().signal
+      const signal = resolved.execution.signal
       if (request.action === 'list') return manager.list({ limit: request.invalidLimit ? Number.NaN : request.limit })
       if (request.action === 'history') {
         if (!request.proposalId) return { status: 'blocked', reason: 'history requires proposalId', events: [], total: 0, returned: 0, truncated: false, sessionOnly: true }
@@ -94,7 +104,7 @@ export function createChangeProposalTool(manager: ChangeProposalManager, verific
           patchId: request.patchId,
           confirmationDigest: request.patchConfirmationDigest ?? '',
           recipeId: request.verificationRecipeId,
-        }, verificationRunner, execution ? { callId: execution.callId, agent: execution.agent } : undefined, signal)
+        }, verificationRunner, { callId: execution.callId, agent: execution.agent }, signal)
       }
       if (request.action === 'prepare-commit') {
         if (!request.proposalId || request.commitMessage === undefined) return { status: 'blocked', operationStatus: 'commit-blocked', reason: 'prepare-commit requires proposalId and commitMessage' }
@@ -102,7 +112,7 @@ export function createChangeProposalTool(manager: ChangeProposalManager, verific
       }
       if (request.action === 'confirm-commit') {
         if (!request.commitId) return { status: 'blocked', operationStatus: 'commit-blocked', reason: 'confirm-commit requires commitId' }
-        return manager.confirmCommit(request.commitId, request.commitConfirmationDigest ?? '', commitAuthorizer, execution ? { callId: execution.callId, agent: execution.agent } : undefined, signal)
+        return manager.confirmCommit(request.commitId, request.commitConfirmationDigest ?? '', commitAuthorizer, { callId: execution.callId, agent: execution.agent }, signal)
       }
       if (request.action === 'reject-commit') {
         if (!request.commitId) return { status: 'blocked', operationStatus: 'commit-blocked', reason: 'reject-commit requires commitId' }
@@ -114,7 +124,7 @@ export function createChangeProposalTool(manager: ChangeProposalManager, verific
       }
       if (request.action === 'confirm-landing') {
         if (!request.landingId) return { status: 'blocked', operationStatus: 'landing-blocked', reason: 'confirm-landing requires landingId' }
-        return manager.confirmLanding(request.landingId, request.landingConfirmationDigest ?? '', landingAuthorizer, execution ? { callId: execution.callId, agent: execution.agent } : undefined, signal)
+        return manager.confirmLanding(request.landingId, request.landingConfirmationDigest ?? '', landingAuthorizer, { callId: execution.callId, agent: execution.agent }, signal)
       }
       if (request.action === 'reject-landing') {
         if (!request.landingId) return { status: 'blocked', operationStatus: 'landing-blocked', reason: 'reject-landing requires landingId' }

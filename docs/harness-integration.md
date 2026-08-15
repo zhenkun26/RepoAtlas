@@ -6,6 +6,8 @@ RepoAtlas 适配器位于 `src/harness/plugin.ts`。它导出 `name = "repo-atla
 
 适配器把业务逻辑留在 `src/` 的 session-only 模块中，Harness 只负责 session、审批与工具生命周期。受控动作和 patch verification 通过 `ctx.get()` 读取公开的 `approval`、`goals`、`sandboxPolicy`、`sandbox` 和 `subprocess` 能力；verification 的执行 root 由 session-owned worktree 提供，不能由工具输入覆盖。v2.3 commit authorizer 与 v2.4 landing authorizer 只读取 `goals` 与 `approval`，要求 active+armed Goal、live agent、tool call id 和一次性 `allowed-once`，不直接执行 Git。landing 的 source path、base revision 和 target revision 由 session manager 派生，工具输入不能覆盖。任何能力缺失、recipe 非 read-only、resolved root 不匹配或 approval 被拒绝都保持工具可见但执行故障关闭。接入已安装的 Harness 时，在 Harness checkout 中执行：
 
+v2.18 起，所有读取或操作 workspace 的工具都从当前调用的 `execution.agent.session.header.cwd` 解析 absolute root，并接收该调用的 `AbortSignal`。`workspaceRoot` 配置仅是可选的 exact restriction，不是 session cwd fallback。每个 exact Harness session object 拥有独立的 config 和 proposal manager；即使 cwd 相同，也不会共享 evidence cache、proposal registry、event history 或 lifecycle state。缺失 execution/session/cwd/signal、预先取消、root 不匹配或 session cwd 漂移时，会在 repository I/O、adapter、approval 和 subprocess 前 fail closed。
+
 ```bash
 pnpm dsh plugin --profile web add /absolute/path/to/RepoAtlas
 pnpm dsh web
@@ -17,10 +19,12 @@ pnpm dsh web
 
 ## 公开分发边界
 
-RepoAtlas 当前按源码 checkout 分发：使用仓库根目录的 `cordis.patch.yml` 加载本地插件，不提供已发布的 npm 包或 `dist/` 编译产物。v2.13 的 `npm run verify:source-artifact` 只验证本地 tarball 能在隔离 consumer 中离线安装、保留 source entry point/metadata 和 bundle patch；它不提供普通 Node consumer 的 `.ts` import 契约，也不执行 npm publish。Node 24 的 built-in TypeScript stripping 会拒绝从 `node_modules` 加载 `.ts`，因此这项限制是当前 source/plugin bundle 决策的一部分。
+RepoAtlas 当前从 checkout 构建后加载：先运行 `npm ci` 与 `npm run build`，再由根目录 `cordis.patch.yml` 加载 `repo-atlas/harness` 的 built export。v2.20 的 `npm run verify:built-artifact` 在 task-owned 目录中验证 `dist/` ESM/declarations、最小 files allowlist、offline tarball install，以及 plain Node root/Harness imports；tarball 不含 raw `src/`，consumer 不运行 prepare/tsx。该能力仍保持 `private:true`，不执行或暗示 npm publish。
 
 真实 Harness 兼容目标固定在 [reference/harness-compatibility.json](../reference/harness-compatibility.json)：公开仓库 `deepseek-ai/deepseek-harness` 的 `master` 分支仅作导航，`47f943859bef60e4160492346772ded9b24f765a` 才是验收 revision，配套 Node 24.x 与 pnpm 11.7.0。忽略的 `reference/deepseek-harness/` 是用户本地 checkout；只有 HEAD 与该 revision 完全一致时才可作为本地 smoke 输入，ahead/diverged checkout 必须 fail closed。
 
-在满足 pin 的 Harness checkout 中，可在 RepoAtlas 根目录运行 `REPO_ATLAS_HARNESS_ROOT=/absolute/path/to/deepseek-harness node scripts/verify-harness-compatibility.mjs`。它使用固定 `pnpm` argv、`shell:false` 和 task-owned 临时 `DSH_HOME`，验证 `plugin add`、`--dump-config` 中的 `repo-atlas/harness` 和 `dsh web --help`；不会写 RepoAtlas source workspace。对应的 GitHub Actions workflow 只有 `workflow_dispatch`，默认 PR/push CI 不会 clone 或安装外部 Harness。
+在满足 pin 且已生成 host declarations 的 Harness checkout 中，可在 RepoAtlas 根目录运行 `REPO_ATLAS_HARNESS_ROOT=/absolute/path/to/deepseek-harness npm run verify:harness-api-contract`，验证 RepoAtlas facade 对官方 ToolDefinition、ToolRunContext、Context、approval、Goal、sandbox-policy、sandbox 与 subprocess declarations 的 assignability。该检查拒绝 tracked dirty 或 revision drift，不把本地手写类型单独视为证据。
 
-现有 fake-context/plugin contract tests 证明公开注册契约，但不等价于真实 Harness checkout 的集成验收；在手动 workflow 有成功且可审阅的 run 之前，不要把 package metadata、bundle manifest、本地 artifact pass 或 readiness observation 误解为已经完成发布、真实 Harness 支持或授权。
+`REPO_ATLAS_HARNESS_ROOT=/absolute/path/to/deepseek-harness npm run verify:harness-compatibility` 使用固定 `pnpm` argv、`shell:false`、filtered environment 和 task-owned 临时 `DSH_HOME`。它验证 `plugin add`、`--dump-config`、官方 API contract，然后实际启动 `dsh web --port 0`；只有观察到 post-settlement `dsh web:` loopback readiness、完成 bounded HTTP probe 并终止 owned child 后才通过。help/config/module import 单独不再算 activation evidence。对应 workflow 仍只有 `workflow_dispatch` 和 `contents: read`；默认 PR/push CI 不 clone、安装、构建或启动外部 Harness。
+
+fake-context tests 与 exact-pin API compile pass 证明不同层次的契约，但都不等价于 live Loader activation。在增强后的手动 workflow 有成功且可审阅的 run 之前，不要把 package metadata、bundle manifest、本地 artifact/API pass、旧 help smoke 或 readiness observation 误解为当前实现已完成 live Harness 支持、发布或授权。

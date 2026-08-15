@@ -54,13 +54,17 @@ try {
 if (packageMetadata) {
   const packageContract = packageMetadata.private === true
     && packageMetadata.license === 'MIT'
-    && packageMetadata.main === './src/index.ts'
-    && packageMetadata.exports?.['.'] === './src/index.ts'
-    && packageMetadata.exports?.['./harness'] === './src/harness/plugin.ts'
+    && packageMetadata.main === './dist/index.js'
+    && packageMetadata.types === './dist/index.d.ts'
+    && packageMetadata.exports?.['.']?.default === './dist/index.js'
+    && packageMetadata.exports?.['.']?.types === './dist/index.d.ts'
+    && packageMetadata.exports?.['./harness']?.default === './dist/harness/plugin.js'
+    && packageMetadata.exports?.['./harness']?.types === './dist/harness/plugin.d.ts'
+    && JSON.stringify(packageMetadata.files) === JSON.stringify(['dist/', 'cordis.patch.yml', 'README.md', 'LICENSE', 'NOTICE.md'])
     && packageMetadata.dsh?.bundle?.patch === './cordis.patch.yml'
-  addCheck('source-first-package-contract', packageContract, 'source-first-contract-mismatch')
+  addCheck('built-private-package-contract', packageContract, 'built-private-contract-mismatch')
 } else {
-  addCheck('source-first-package-contract', false, 'package-metadata-invalid')
+  addCheck('built-private-package-contract', false, 'package-metadata-invalid')
 }
 
 const license = readText('LICENSE', 'license-document-missing')

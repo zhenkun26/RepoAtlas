@@ -1,0 +1,101 @@
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, join, resolve } from 'node:path'
+
+const repoRoot = resolve(process.cwd())
+const packageFile = join(repoRoot, 'package.json')
+const manifest = JSON.parse(readFileSync(packageFile, 'utf8'))
+const distRoot = join(repoRoot, 'dist')
+let tempRoot
+
+function assertCondition(condition, message) {
+  if (!condition) throw new Error(message)
+}
+
+function run(executable, args, options = {}) {
+  try {
+    return execFileSync(executable, args, {
+      cwd: repoRoot, encoding: 'utf8', shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 4 * 1024 * 1024,
+      timeout: 120_000, ...options,
+    })
+  } catch (error) {
+    const detail = error && typeof error === 'object'
+      ? [error.stdout, error.stderr].filter(Boolean).join('\n').trim().slice(0, 2_000)
+      : ''
+    throw new Error(`${executable} ${args.join(' ')} failed${detail ? `: ${detail}` : ''}`)
+  }
+}
+
+function filesUnder(root, relative = '') {
+  const directory = join(root, relative)
+  return readdirSync(directory).flatMap((entry) => {
+    const child = join(relative, entry)
+    return statSync(join(root, child)).isDirectory() ? filesUnder(root, child) : [child.replaceAll('\\', '/')]
+  })
+}
+
+try {
+  assertCondition(manifest.private === true, 'package.json must remain private')
+  assertCondition(manifest.license === 'MIT', 'package.json must declare the MIT license')
+  assertCondition(manifest.main === './dist/index.js', 'package main must use the built root')
+  assertCondition(manifest.types === './dist/index.d.ts', 'package types must use the built root declaration')
+  assertCondition(manifest.exports?.['.']?.default === './dist/index.js', 'root runtime export must use dist')
+  assertCondition(manifest.exports?.['.']?.types === './dist/index.d.ts', 'root type export must use dist')
+  assertCondition(manifest.exports?.['./harness']?.default === './dist/harness/plugin.js', 'Harness runtime export must use dist')
+  assertCondition(manifest.exports?.['./harness']?.types === './dist/harness/plugin.d.ts', 'Harness type export must use dist')
+  assertCondition(manifest.dsh?.bundle?.patch === './cordis.patch.yml', 'the dsh bundle patch declaration changed unexpectedly')
+  assertCondition(JSON.stringify(manifest.files) === JSON.stringify(['dist/', 'cordis.patch.yml', 'README.md', 'LICENSE', 'NOTICE.md']), 'package files allowlist changed unexpectedly')
+
+  run('npm', ['run', 'build'])
+  assertCondition(existsSync(join(distRoot, 'index.js')), 'build is missing dist/index.js')
+  assertCondition(existsSync(join(distRoot, 'index.d.ts')), 'build is missing dist/index.d.ts')
+  assertCondition(existsSync(join(distRoot, 'harness', 'plugin.js')), 'build is missing dist/harness/plugin.js')
+  assertCondition(existsSync(join(distRoot, 'harness', 'plugin.d.ts')), 'build is missing dist/harness/plugin.d.ts')
+  for (const file of filesUnder(distRoot).filter((entry) => entry.endsWith('.js'))) {
+    const contents = readFileSync(join(distRoot, file), 'utf8')
+    assertCondition(!/(?:from\s+|import\s*\()['"][^'"]+\.(?:ts|tsx|mts|cts)['"]/.test(contents), `emitted JavaScript retains a TypeScript import: dist/${file}`)
+  }
+
+  tempRoot = mkdtempSync(join(tmpdir(), 'repo-atlas-built-artifact-'))
+  const npmEnvironment = { ...process.env, npm_config_cache: join(tempRoot, 'npm-cache') }
+  const packOutput = run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', tempRoot], { env: npmEnvironment })
+  const packResult = JSON.parse(packOutput)
+  const packageFiles = packResult[0]?.files?.map((entry) => entry.path) ?? []
+  for (const required of ['dist/index.js', 'dist/index.d.ts', 'dist/harness/plugin.js', 'dist/harness/plugin.d.ts', 'cordis.patch.yml', 'README.md', 'LICENSE', 'NOTICE.md']) {
+    assertCondition(packageFiles.includes(required), `packed artifact is missing ${required}`)
+  }
+  for (const prohibited of ['src/', 'test/', 'examples/', 'openspec/', 'reference/', 'coverage/', '.dsh/']) {
+    assertCondition(!packageFiles.some((file) => file.startsWith(prohibited)), `packed artifact includes prohibited path ${prohibited}`)
+  }
+
+  const tarballName = readdirSync(tempRoot).find((entry) => entry.endsWith('.tgz'))
+  assertCondition(tarballName, 'npm pack did not create a tarball')
+  const tarball = join(tempRoot, tarballName)
+  const consumer = join(tempRoot, 'consumer')
+  mkdirSync(consumer)
+  run('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', consumer, tarball], { env: npmEnvironment })
+  const installedPackage = JSON.parse(readFileSync(join(consumer, 'node_modules', manifest.name, 'package.json'), 'utf8'))
+  assertCondition(installedPackage.private === true, 'installed artifact lost private package metadata')
+  assertCondition(installedPackage.license === 'MIT', 'installed artifact lost MIT metadata')
+  assertCondition(installedPackage.exports?.['.']?.default === './dist/index.js', 'installed root export does not use dist')
+  assertCondition(installedPackage.exports?.['./harness']?.default === './dist/harness/plugin.js', 'installed Harness export does not use dist')
+  run('node', ['--input-type=module', '--eval', `
+    const root = await import('repo-atlas')
+    const harness = await import('repo-atlas/harness')
+    if (typeof root.analyzeRepository !== 'function') throw new Error('root export missing analyzeRepository')
+    if (harness.name !== 'repo-atlas' || typeof harness.apply !== 'function') throw new Error('Harness export shape is invalid')
+    const tools = []
+    harness.apply({ tools: { register: tool => tools.push(tool) } })
+    if (!tools.some(tool => tool.name === 'repo_atlas_analyze')) throw new Error('built analysis tool did not register')
+    if (!tools.some(tool => tool.name === 'repo_atlas_change_proposal')) throw new Error('built proposal tool did not register')
+  `], { cwd: consumer, env: npmEnvironment })
+
+  console.log(`PASS: built artifact offline install/import smoke (${basename(tarball)}).`)
+} catch (error) {
+  console.error(`FAIL: built artifact smoke: ${error instanceof Error ? error.message : String(error)}`)
+  process.exitCode = 1
+} finally {
+  if (tempRoot) rmSync(tempRoot, { recursive: true, force: true })
+}

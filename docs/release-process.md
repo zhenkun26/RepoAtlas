@@ -6,7 +6,7 @@ This procedure prepares and records a RepoAtlas source-first release. It is a re
 
 1. Confirm the named MIT copyright holder and preserve [`LICENSE`](../LICENSE), [`NOTICE.md`](../NOTICE.md), and the separate source-attribution guidance.
 2. Treat the existing `v0.1.0` tag as immutable historical state. It points to `455dbb61d5cabe032e3497ba4d9eeb9c39584662`; do not move, delete, recreate, or overwrite it.
-3. Use package version `0.1.1` for the next reviewed candidate and retain `private: true` because the supported delivery is a source/plugin bundle, not npm publication.
+3. Retain `private: true`. The current checkout can build a local package artifact, but npm publication and any next version/tag remain separate maintainer decisions.
 4. Confirm the pinned Harness smoke and README installation recheck are recorded in [`docs/release-checklist.md`](release-checklist.md).
 5. Prepare release notes by reviewing the `[0.1.1] - 2026-08-15` section in [`CHANGELOG.md`](../CHANGELOG.md); do not rewrite the immutable `v0.1.0` history automatically.
 6. Use a clean checkout whose `HEAD` equals the reviewed `origin/main` revision and has no active OpenSpec change.
@@ -32,7 +32,7 @@ These values are presentation metadata only. They do not change the source-first
 
 For v0.1.1, the maintainer manually created the exact tag and GitHub Release for reviewed commit `3eb5c0c8c48373dd19a6e0317de8ffb26f0064bc`, attached source-first release notes, and recorded <https://github.com/zhenkun26/RepoAtlas/releases/tag/v0.1.1>. The release describes the source checkout/plugin bundle and does not imply an npm package or compiled distribution. The existing `v0.1.0` tag was not reused.
 
-The tag/release operation is intentionally not implemented in RepoAtlas automation. It must be separately approved and performed using the repository's normal protected-branch and release controls. If a future npm distribution is desired, it requires a new OpenSpec change covering build output, exports, files allowlist, package smoke, and compatibility policy.
+The tag/release operation is intentionally not implemented in RepoAtlas automation. It must be separately approved and performed using the repository's normal protected-branch and release controls. v2.20 covers build output, exports, files allowlist, package smoke, and compatibility policy; that is technical artifact readiness only. Any future npm publication still requires independently reviewed version, registry, provenance, authentication, and release authorization work.
 
 ## After release
 

@@ -1,34 +1,37 @@
 import { createGoalSpec, missingGoalFields, nextClarificationQuestion, resolveStart } from '../clarification/goal.ts'
 import { analyzeRepository } from '../repository/analyze.ts'
 import { generateReport } from '../reporting/report.ts'
-import { createConfig } from '../config.ts'
 import { createControlledActionTool } from './controlled-tool.ts'
 import { createChangeProposalTool } from './change-proposal-tool.ts'
 import { createChangeProposalVerificationRunner } from './change-proposal-verification.ts'
 import { createChangeProposalCommitAuthorizer } from './change-proposal-commit.ts'
 import { createChangeProposalLandingAuthorizer } from './change-proposal-landing.ts'
-import { ChangeProposalManager } from '../repository/change-proposal.ts'
+import { HarnessSessionRuntimeRegistry, type HarnessSessionRuntimeResolution } from './session-runtime.ts'
 import type { GoalSpec } from '../types.ts'
-import type { HarnessPluginContext, HarnessTool, RepoAtlasPluginConfig, RepoAtlasToolResult } from './public.ts'
+import type { HarnessPluginContext, HarnessTool, HarnessToolExecution, RepoAtlasPluginConfig, RepoAtlasToolResult } from './public.ts'
 
 export const name = 'repo-atlas'
 export const inject = ['tools'] as const
 
 export function apply(ctx: HarnessPluginContext, pluginConfig: RepoAtlasPluginConfig = {}): void {
-  const config = createConfig(pluginConfig.workspaceRoot ?? process.cwd(), pluginConfig)
-  const proposalManager = new ChangeProposalManager(config)
-  const verificationRunner = createChangeProposalVerificationRunner(config, ctx)
+  const runtimes = new HarnessSessionRuntimeRegistry(pluginConfig)
+  const resolveRuntime = runtimes.resolve.bind(runtimes)
   const commitAuthorizer = createChangeProposalCommitAuthorizer(ctx)
   const landingAuthorizer = createChangeProposalLandingAuthorizer(ctx)
-  ctx.tools.register(createRepoAtlasTool(config.workspaceRoot, pluginConfig, proposalManager))
-  ctx.tools.register(createChangeProposalTool(proposalManager, verificationRunner, commitAuthorizer, landingAuthorizer))
-  if (config.controlledActions.enabled) ctx.tools.register(createControlledActionTool(config, ctx))
+  ctx.tools.register(createRepoAtlasTool(resolveRuntime, pluginConfig))
+  ctx.tools.register(createChangeProposalTool(
+    resolveRuntime,
+    runtime => createChangeProposalVerificationRunner(runtime.config, ctx),
+    commitAuthorizer,
+    landingAuthorizer,
+  ))
+  if (pluginConfig.controlledActions?.enabled === true) ctx.tools.register(createControlledActionTool(resolveRuntime, ctx))
   ctx.logger?.info('RepoAtlas registered read-only analysis tool')
   ctx.logger?.info('RepoAtlas registered session-only change proposal tool')
-  if (config.controlledActions.enabled) ctx.logger?.info('RepoAtlas registered controlled action tool with explicit approval')
+  if (pluginConfig.controlledActions?.enabled === true) ctx.logger?.info('RepoAtlas registered controlled action tool with explicit approval')
 }
 
-export function createRepoAtlasTool(workspaceRoot: string, overrides: RepoAtlasPluginConfig = {}, proposalManager = new ChangeProposalManager(createConfig(workspaceRoot, overrides))): HarnessTool {
+export function createRepoAtlasTool(resolveRuntime: (execution: HarnessToolExecution | undefined) => HarnessSessionRuntimeResolution, overrides: RepoAtlasPluginConfig = {}): HarnessTool {
   return {
     name: 'repo_atlas_analyze',
     description: '通过多轮 GoalSpec 澄清后，对当前 workspace 执行受预算约束的只读代码库分析并生成证据化报告。',
@@ -47,15 +50,17 @@ export function createRepoAtlasTool(workspaceRoot: string, overrides: RepoAtlasP
         text: JSON.stringify(value, null, 2),
       }],
     },
-    async execute(input: unknown): Promise<RepoAtlasToolResult> {
+    async execute(input: unknown, execution: HarnessToolExecution): Promise<RepoAtlasToolResult> {
       const data = asInput(input)
       let goal = createGoalSpec(data.goal)
       if (data.start === 'direct') goal = resolveStart(goal, 'direct')
       if (!goal.confirmed) {
         return { policy: 'readonly', goal, clarification: { missing: missingGoalFields(goal), question: nextClarificationQuestion(goal) } }
       }
-      const session = await analyzeRepository(goal, workspaceRoot, overrides)
-      proposalManager.registerSession(session)
+      const resolved = resolveRuntime(execution)
+      if (!resolved.ok) return { policy: 'readonly', goal, blocked: { reason: resolved.reason } }
+      const session = await analyzeRepository(goal, resolved.runtime.workspaceRoot, overrides, resolved.execution.signal)
+      resolved.runtime.proposalManager.registerSession(session)
       return { policy: 'readonly', goal, report: generateReport(session) }
     },
   }

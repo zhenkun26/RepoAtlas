@@ -13,22 +13,40 @@
     "url": "https://github.com/zhenkun26/RepoAtlas/issues"
   },
   "homepage": "https://github.com/zhenkun26/RepoAtlas#readme",
-  "main": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./harness": "./src/harness/plugin.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./harness": {
+      "types": "./dist/harness/plugin.d.ts",
+      "default": "./dist/harness/plugin.js"
+    }
   },
+  "files": [
+    "dist/",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "NOTICE.md"
+  ],
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
   },
   "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepack": "npm run build",
     "test": "node --test --experimental-strip-types test/*.test.ts",
     "demo": "node --experimental-strip-types examples/demo.ts",
     "typecheck": "node scripts/typecheck.mjs",
     "lint": "node scripts/lint.mjs",
-    "verify:source-artifact": "node scripts/verify-source-artifact.mjs",
+    "verify:built-artifact": "node scripts/verify-built-artifact.mjs",
+    "verify:source-artifact": "npm run verify:built-artifact",
+    "verify:harness-api-contract": "node scripts/verify-harness-api-contract.mjs",
     "verify:harness-compatibility": "node scripts/verify-harness-compatibility.mjs",
     "verify:release-preflight": "node scripts/verify-release-preflight.mjs",
     "validate:openspec": "openspec validate --all --strict --no-interactive",

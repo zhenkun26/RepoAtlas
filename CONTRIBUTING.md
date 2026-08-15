@@ -11,7 +11,7 @@ Thanks for helping improve RepoAtlas. The project is a security-bounded DeepSeek
   ```bash
   npm test
   npm run lint
-  npm run verify:source-artifact
+  npm run verify:built-artifact
   npm run typecheck
   npm run validate:openspec
   git diff --check

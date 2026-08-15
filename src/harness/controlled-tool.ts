@@ -1,37 +1,13 @@
 import { decideControlledAction } from '../actions/controlled.ts'
 import { runControlledAction, type ControlledActionResult, type ControlledActionRuntime, type ControlledActionSubprocess, type ControlledActionSandbox, type ControlledActionPolicy, type ControlledActionPolicyResolver } from '../actions/runtime.ts'
-import type { ControlledActionSandboxMode, RepoAtlasConfig } from '../types.ts'
-import type { HarnessAgent, HarnessPluginContext, HarnessTool, HarnessToolExecution } from './public.ts'
+import type { RepoAtlasConfig } from '../types.ts'
+import type { HarnessAgent, HarnessApprovalService, HarnessGoalService, HarnessPluginContext, HarnessSandboxPolicyService, HarnessTool, HarnessToolExecution } from './public.ts'
+import type { HarnessSessionRuntimeResolution } from './session-runtime.ts'
 
-type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
-
-interface HarnessApprovalService {
-  request(request: {
-    agent: HarnessAgent
-    toolName: string
-    callId?: string
-    reason?: string
-    signal?: AbortSignal
-  }): Promise<ApprovalOutcome>
-}
-
-interface HarnessGoalService {
-  get(agent: HarnessAgent): { phase: 'active' | 'paused' | 'blocked' | 'complete'; activation: 'armed' | 'disarmed' } | undefined
-}
-
-interface HarnessSandboxPolicyService {
-  resolve(request: { mode: ControlledActionSandboxMode; session?: HarnessSession; workspaceRoot?: string }): {
-    mode: string
-    workspaceRoot: string
-    sessionId?: string
-  }
-}
-
-interface HarnessSession {
-  header?: { cwd?: string }
-}
-
-export function createControlledActionTool(config: RepoAtlasConfig, ctx: HarnessPluginContext): HarnessTool {
+export function createControlledActionTool(
+  resolveRuntime: (execution: HarnessToolExecution | undefined) => HarnessSessionRuntimeResolution,
+  ctx: HarnessPluginContext,
+): HarnessTool {
   return {
     name: 'repo_atlas_controlled_action',
     description: '在已确认 Goal 和一次性用户授权后，运行配置中的受控项目检查 recipe；不接受自由 Shell 命令。',
@@ -50,12 +26,16 @@ export function createControlledActionTool(config: RepoAtlasConfig, ctx: Harness
         text: JSON.stringify(value, null, 2),
       }],
     },
-    async execute(input: unknown, execution?: HarnessToolExecution) {
+    async execute(input: unknown, execution: HarnessToolExecution) {
       const request = actionInput(input)
-      const exec = execution ?? { signal: AbortSignal.abort() }
+      const resolved = resolveRuntime(execution)
+      if (!resolved.ok) return deniedRuntimeResult(request.recipeId, resolved.reason)
+      const exec = resolved.execution
+      const config = resolved.runtime.config
       const goalConfirmed = hasConfirmedGoal(ctx.get?.<HarnessGoalService>('goals'), exec.agent)
       const preflight = decideControlledAction(config, {
         ...request,
+        workspaceRoot: resolved.runtime.workspaceRoot,
         session: exec.agent?.session,
         goalConfirmed,
         userConfirmed: true,
@@ -72,6 +52,7 @@ export function createControlledActionTool(config: RepoAtlasConfig, ctx: Harness
       )
       const result = await runControlledAction(config, {
         ...request,
+        workspaceRoot: resolved.runtime.workspaceRoot,
         session: exec.agent?.session,
         goalConfirmed,
         userConfirmed: approval.allowed,
@@ -80,6 +61,20 @@ export function createControlledActionTool(config: RepoAtlasConfig, ctx: Harness
       }, createControlledActionRuntime(ctx, exec))
       return result
     },
+  }
+}
+
+function deniedRuntimeResult(recipeId: string, reason: string): ControlledActionResult {
+  return {
+    status: 'denied',
+    auditId: `action-${crypto.randomUUID()}`,
+    recipeId,
+    reason,
+    stdout: '',
+    stderr: '',
+    outputTruncated: false,
+    redacted: false,
+    redactedMatchCount: 0,
   }
 }
 
@@ -150,7 +145,7 @@ function createControlledActionRuntime(ctx: HarnessPluginContext, execution: Har
   const sandboxPolicy = ctx.get?.<HarnessSandboxPolicyService>('sandboxPolicy')
   const policy: ControlledActionPolicyResolver | undefined = sandboxPolicy === undefined ? undefined : {
     resolve(request) {
-      const resolved = sandboxPolicy.resolve({ mode: request.mode, session: execution.agent?.session, workspaceRoot: request.workspaceRoot })
+      const resolved = sandboxPolicy.resolve({ mode: request.mode, session: execution.agent?.session })
       if (resolved.mode !== 'read-only' && resolved.mode !== 'workspace-write') {
         throw new Error('unsupported sandbox mode returned by Harness')
       }

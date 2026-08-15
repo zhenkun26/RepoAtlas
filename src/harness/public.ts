@@ -1,7 +1,7 @@
 import type { AnalysisReport, GoalSpec, RepoAtlasConfig } from '../types.ts'
 
 export interface HarnessSession {
-  header?: { cwd?: string }
+  header?: { id?: string; cwd?: string }
 }
 
 export interface HarnessAgent {
@@ -27,7 +27,7 @@ export interface HarnessTool {
     schema: Record<string, unknown>
     render(args: unknown, value: unknown): Array<{ type: 'text'; text: string }>
   }
-  execute(input: unknown, execution?: HarnessToolExecution): Promise<unknown>
+  execute(input: unknown, execution: HarnessToolExecution): Promise<unknown>
 }
 
 export interface HarnessPluginContext {
@@ -36,11 +36,36 @@ export interface HarnessPluginContext {
   get?<T>(name: string, strict?: boolean): T | undefined
 }
 
+export type HarnessApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+
+export interface HarnessApprovalService {
+  request(request: {
+    agent: HarnessAgent
+    toolName: string
+    callId?: string
+    reason?: string
+    signal?: AbortSignal
+  }): Promise<HarnessApprovalOutcome>
+}
+
+export interface HarnessGoalService {
+  get(agent: HarnessAgent): { phase: 'active' | 'paused' | 'blocked' | 'complete'; activation: 'armed' | 'disarmed' } | undefined
+}
+
+export interface HarnessSandboxPolicyService {
+  resolve(request?: { mode?: 'read-only' | 'workspace-write'; session?: HarnessSession }): {
+    mode: string
+    workspaceRoot: string
+    sessionId?: string
+  }
+}
+
 export interface RepoAtlasPluginConfig extends Partial<Omit<RepoAtlasConfig, 'workspaceRoot'>> {
   workspaceRoot?: string
 }
 
 export interface RepoAtlasToolResult {
+  blocked?: { reason: string }
   clarification?: unknown
   report?: AnalysisReport
   policy: 'readonly'
