@@ -212,6 +212,124 @@ test('proposal lifecycle requires exact confirmation and releases a clean owned 
   assert.equal(adapter.removeCount, 1)
 })
 
+test('lifecycle inspection returns detached session snapshots without touching Git', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+
+  const pending = await manager.prepare(request())
+  const proposalId = pending.proposal?.proposalId ?? ''
+  const inspected = manager.inspect(proposalId)
+  assert.equal(inspected.status, 'awaiting-confirmation')
+  assert.equal(inspected.operationStatus, 'proposal')
+  assert.equal(inspected.proposal?.executionStatus.push, 'push-not-performed')
+  assert.equal(adapter.createCount, 0)
+  assert.match(inspected.reason, /session-only|live workspace|Git state/)
+
+  if (!inspected.proposal) throw new Error('inspection should include the pending proposal')
+  inspected.proposal.targets[0]!.status = 'uncovered'
+  inspected.proposal.limitations.push('caller mutation')
+  const detached = manager.inspect(proposalId)
+  assert.equal(detached.proposal?.targets[0]?.status, 'confirmed')
+  assert.equal(detached.proposal?.limitations.includes('caller mutation'), false)
+
+  const rejected = manager.reject(proposalId)
+  assert.equal(rejected.status, 'rejected')
+  const terminal = manager.inspect(proposalId)
+  assert.equal(terminal.status, 'rejected')
+  assert.equal(terminal.operationStatus, 'blocked')
+
+  const unknown = manager.inspect('proposal-unknown')
+  assert.equal(unknown.status, 'blocked')
+  assert.equal(unknown.operationStatus, 'blocked')
+  assert.equal(unknown.proposal, undefined)
+})
+
+test('lifecycle inspection preserves an uncertain commit state without upgrading it', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+  const draft = await prepareVerifiedCommitDraft(manager, passedVerificationRunner(), 'uncertain-inspection')
+  adapter.failCommitPostcondition = true
+
+  const uncertain = await manager.confirmCommit(
+    draft.proposal?.commit?.commitId ?? '',
+    draft.proposal?.commit?.confirmationDigest ?? '',
+    { authorize: async () => ({ allowed: true, auditId: 'approval-uncertain-inspection', reason: 'approved' }) },
+  )
+  assert.equal(uncertain.proposal?.commit?.executionStatus, 'commit-creation-unknown')
+
+  const inspected = manager.inspect(draft.proposal?.proposalId ?? '')
+  assert.equal(inspected.proposal?.commit?.executionStatus, 'commit-creation-unknown')
+  assert.equal(inspected.proposal?.executionStatus.commit, 'commit-creation-unknown')
+  assert.equal(inspected.proposal?.commitCreated, false)
+  assert.equal(inspected.proposal?.pushPerformed, false)
+})
+
+test('proposal listing returns bounded deterministic redacted summaries', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+  const empty = manager.list()
+  assert.equal(empty.status, 'available')
+  assert.deepEqual(empty.proposals, [])
+  assert.equal(empty.total, 0)
+  assert.equal(empty.truncated, false)
+
+  const oldest = await manager.prepare(request({ intent: 'oldest proposal' }))
+  await new Promise((resolve) => setTimeout(resolve, 2))
+  const middle = await manager.prepare(request({ intent: 'middle proposal' }))
+  await new Promise((resolve) => setTimeout(resolve, 2))
+  const newest = await manager.prepare(request({ intent: 'token = "sk-abcdefghijklmnop"' }))
+
+  const listed = manager.list({ limit: 2 })
+  assert.equal(listed.status, 'available')
+  assert.equal(listed.total, 3)
+  assert.equal(listed.returned, 2)
+  assert.equal(listed.truncated, true)
+  assert.deepEqual(listed.proposals.map((proposal) => proposal.proposalId), [newest.proposal?.proposalId, middle.proposal?.proposalId])
+  assert.equal(listed.proposals[0]?.targetCount, 1)
+  assert.equal(listed.proposals[0]?.confirmedTargetCount, 1)
+  assert.equal(JSON.stringify(listed.proposals).includes('sk-abcdefghijklmnop'), false)
+  assert.equal(JSON.stringify(listed.proposals).includes('src/index.ts'), false)
+  assert.equal(JSON.stringify(listed.proposals).includes('workspaceRoot'), false)
+  assert.equal(JSON.stringify(listed.proposals).includes('confirmationDigest'), false)
+  assert.deepEqual(manager.list({ limit: 2 }).proposals.map((proposal) => proposal.proposalId), listed.proposals.map((proposal) => proposal.proposalId))
+  assert.equal(adapter.createCount, 0)
+  assert.equal(oldest.status, 'awaiting-confirmation')
+})
+
+test('proposal listing rejects invalid limits and preserves uncertain execution states', async () => {
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: new FakeGitAdapter() })
+  manager.registerSession(createSession())
+  for (const limit of [0, -1, 1.5, 101, Number.NaN]) {
+    const invalid = manager.list({ limit })
+    assert.equal(invalid.status, 'blocked')
+    assert.deepEqual(invalid.proposals, [])
+    assert.equal(invalid.returned, 0)
+    assert.equal(invalid.total, 0)
+  }
+
+  const adapter = new FakeGitAdapter()
+  const uncertainManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  uncertainManager.registerSession(createSession())
+  const draft = await prepareVerifiedCommitDraft(uncertainManager, passedVerificationRunner(), 'list-uncertain')
+  adapter.failCommitPostcondition = true
+  await uncertainManager.confirmCommit(
+    draft.proposal?.commit?.commitId ?? '',
+    draft.proposal?.commit?.confirmationDigest ?? '',
+    { authorize: async () => ({ allowed: true, auditId: 'approval-list-uncertain', reason: 'approved' }) },
+  )
+  const commitCount = adapter.commitCount
+  const listed = uncertainManager.list({ limit: 1 })
+  const summary = listed.proposals[0]
+  assert.equal(summary?.executionStatus.commit, 'commit-creation-unknown')
+  assert.equal(summary?.commit?.executionStatus, 'commit-creation-unknown')
+  assert.equal(summary?.commitCreated, false)
+  assert.equal(summary?.executionStatus.push, 'push-not-performed')
+  assert.equal(adapter.commitCount, commitCount)
+})
+
 test('proposal validation preserves safe partial targets and bounded evidence', async () => {
   const manager = new ChangeProposalManager(createConfig(fixtureRoot), {
     adapter: new FakeGitAdapter(),

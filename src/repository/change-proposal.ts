@@ -16,6 +16,8 @@ import type {
   ChangeProposalLanding,
   ChangeProposalLandingRequest,
   ChangeProposalLandingExecutionStatus,
+  ChangeProposalListRequest,
+  ChangeProposalListResult,
   ChangeProposalPatch,
   ChangeProposalPatchFileSummary,
   ChangeProposalPatchRequest,
@@ -24,6 +26,7 @@ import type {
   ChangeProposalOperation,
   ChangeProposalRequest,
   ChangeProposalResult,
+  ChangeProposalSummary,
   ChangeProposalTarget,
   ChangeProposalVerification,
   ChangeProposalVerifyPatchRequest,
@@ -54,6 +57,9 @@ export const DEFAULT_CHANGE_PROPOSAL_LIMITS: ChangeProposalLimits = {
   maxPatchHunks: 128,
   maxPatchLineBytes: 8 * 1_024,
 }
+
+export const DEFAULT_CHANGE_PROPOSAL_LIST_LIMIT = 50
+export const MAX_CHANGE_PROPOSAL_LIST_LIMIT = 100
 
 interface RepositoryRevision {
   repositoryRoot: string
@@ -216,6 +222,28 @@ export class ChangeProposalManager {
   registerSession(session: AnalysisSession): void {
     if (session.workspaceRoot !== this.config.workspaceRoot) return
     this.sessions.set(session.sessionId, session)
+  }
+
+  inspect(proposalId: string): ChangeProposalResult {
+    const proposal = this.proposals.get(proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal is unknown to the current session')
+    return resultFor(proposal, 'session-only proposal lifecycle snapshot returned; live workspace and Git state were not inspected')
+  }
+
+  list(request: ChangeProposalListRequest = {}): ChangeProposalListResult {
+    const limit = normalizeProposalListLimit(request.limit)
+    if (limit === undefined) return blockedProposalList('proposal list limit must be a positive safe integer no greater than 100')
+    const ordered = [...this.proposals.values()].sort(compareProposalCreation)
+    const proposals = ordered.slice(0, limit).map(proposalSummary)
+    return {
+      status: 'available',
+      reason: 'session-only proposal summaries returned; live workspace and Git state were not inspected',
+      proposals,
+      total: ordered.length,
+      returned: proposals.length,
+      truncated: ordered.length > limit,
+      sessionOnly: true,
+    }
   }
 
   async prepare(request: ChangeProposalRequest, signal?: AbortSignal): Promise<ChangeProposalResult> {
@@ -1328,6 +1356,51 @@ function unavailableVerification(
   }
 }
 
+function normalizeProposalListLimit(value: number | undefined): number | undefined {
+  const limit = value === undefined ? DEFAULT_CHANGE_PROPOSAL_LIST_LIMIT : value
+  return Number.isSafeInteger(limit) && limit > 0 && limit <= MAX_CHANGE_PROPOSAL_LIST_LIMIT ? limit : undefined
+}
+
+function compareProposalCreation(left: ChangeProposal, right: ChangeProposal): number {
+  return right.createdAt.localeCompare(left.createdAt) || right.proposalId.localeCompare(left.proposalId)
+}
+
+function proposalSummary(proposal: ChangeProposal): ChangeProposalSummary {
+  return {
+    proposalId: proposal.proposalId,
+    intent: proposal.intent,
+    status: proposal.status,
+    operationStatus: proposal.operationStatus,
+    targetCount: proposal.targets.length,
+    confirmedTargetCount: proposal.targets.filter((target) => target.status === 'confirmed').length,
+    createdAt: proposal.createdAt,
+    expiresAt: proposal.expiresAt,
+    executionStatus: { ...proposal.executionStatus },
+    patchApplied: proposal.patchApplied,
+    commitCreated: proposal.commitCreated,
+    sourceLanded: proposal.sourceLanded,
+    pushPerformed: false,
+    patch: proposal.patch ? {
+      patchId: proposal.patch.patchId,
+      status: proposal.patch.status,
+      executionStatus: proposal.patch.executionStatus,
+      verificationStatus: proposal.patch.verificationStatus,
+    } : undefined,
+    commit: proposal.commit ? {
+      commitId: proposal.commit.commitId,
+      status: proposal.commit.status,
+      executionStatus: proposal.commit.executionStatus,
+      revision: proposal.commit.revision,
+    } : undefined,
+    landing: proposal.landing ? {
+      landingId: proposal.landing.landingId,
+      status: proposal.landing.status,
+      executionStatus: proposal.landing.executionStatus,
+      landedRevision: proposal.landing.landedRevision,
+    } : undefined,
+  }
+}
+
 function samePathSet(left: readonly string[], right: readonly string[]): boolean {
   return [...new Set(left)].sort().join('\0') === [...new Set(right)].sort().join('\0')
 }
@@ -1422,6 +1495,18 @@ function boundedList(values: readonly string[], maxBytes: number): string[] {
 
 function resultFor(proposal: ChangeProposal, reason: string): ChangeProposalResult {
   return { status: proposal.status, operationStatus: proposal.operationStatus, reason, proposal: cloneProposal(proposal) }
+}
+
+function blockedProposalList(reason: string): ChangeProposalListResult {
+  return {
+    status: 'blocked',
+    reason,
+    proposals: [],
+    total: 0,
+    returned: 0,
+    truncated: false,
+    sessionOnly: true,
+  }
 }
 
 function mutateStatus(proposal: ChangeProposal, status: ChangeProposal['status'], operationStatus: ChangeProposal['operationStatus'], reason: string): ChangeProposalResult {

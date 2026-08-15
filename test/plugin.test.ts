@@ -35,8 +35,44 @@ test('Harness adapter registers read-only analysis and session-only proposal too
   assert.match(JSON.stringify(proposal.parameters), /prepare-landing/)
   assert.match(JSON.stringify(proposal.parameters), /confirm-landing/)
   assert.match(JSON.stringify(proposal.parameters), /reject-landing/)
+  assert.match(JSON.stringify(proposal.parameters), /inspect/)
+  assert.match(JSON.stringify(proposal.parameters), /list/)
+  assert.match(JSON.stringify(proposal.parameters), /limit/)
   assert.deepEqual(analysis.output.schema, { type: 'object' })
   assert.match(analysis.output.render({}, { policy: 'readonly' })[0]?.text ?? '', /"policy": "readonly"/)
+
+  const analyzed = await analysis.execute({ start: 'direct', goal: { intent: 'onboarding' } }) as { report?: { sessionId: string } }
+  assert.ok(analyzed.report?.sessionId)
+  const prepared = await proposal.execute({
+    action: 'prepare',
+    sessionId: analyzed.report?.sessionId,
+    intent: 'inspect lifecycle state',
+    targets: [{ relativePath: 'src/index.ts', operation: 'modify' }],
+  }) as { proposal?: { proposalId: string; status: string } }
+  assert.equal(prepared.proposal?.status, 'awaiting-confirmation')
+  const inspected = await proposal.execute({ action: 'inspect', proposalId: prepared.proposal?.proposalId }) as { status: string; operationStatus: string; proposal?: { proposalId: string } }
+  assert.equal(inspected.status, 'awaiting-confirmation')
+  assert.equal(inspected.operationStatus, 'proposal')
+  assert.equal(inspected.proposal?.proposalId, prepared.proposal?.proposalId)
+  const missingInspect = await proposal.execute({ action: 'inspect' }) as { status: string; operationStatus: string }
+  assert.equal(missingInspect.status, 'blocked')
+  assert.equal(missingInspect.operationStatus, 'blocked')
+  const unknownInspect = await proposal.execute({ action: 'inspect', proposalId: 'proposal-unknown' }) as { status: string; operationStatus: string }
+  assert.equal(unknownInspect.status, 'blocked')
+  assert.equal(unknownInspect.operationStatus, 'blocked')
+  const listed = await proposal.execute({ action: 'list', limit: 1 }) as { status: string; total: number; returned: number; truncated: boolean; proposals?: Array<{ proposalId: string }> }
+  assert.equal(listed.status, 'available')
+  assert.equal(listed.total, 1)
+  assert.equal(listed.returned, 1)
+  assert.equal(listed.truncated, false)
+  assert.equal(listed.proposals?.[0]?.proposalId, prepared.proposal?.proposalId)
+  const invalidList = await proposal.execute({ action: 'list', limit: 0 }) as { status: string; returned: number; proposals?: unknown[] }
+  assert.equal(invalidList.status, 'blocked')
+  assert.equal(invalidList.returned, 0)
+  assert.deepEqual(invalidList.proposals, [])
+  const invalidTypeList = await proposal.execute({ action: 'list', limit: 'many' }) as { status: string; returned: number }
+  assert.equal(invalidTypeList.status, 'blocked')
+  assert.equal(invalidTypeList.returned, 0)
   const clarification = await analysis.execute({}) as { clarification?: { question?: { field?: string } } }
   assert.equal(clarification.clarification?.question?.field, 'intent')
   assert.ok(logs.some((message) => message.includes('read-only')))

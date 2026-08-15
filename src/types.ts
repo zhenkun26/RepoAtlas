@@ -311,6 +311,10 @@ export interface ChangeProposalRequest {
   evidenceIds?: string[]
 }
 
+export interface ChangeProposalListRequest {
+  limit?: number
+}
+
 export interface ChangeProposalPatchRequest {
   proposalId: string
   patchText: string
@@ -472,6 +476,50 @@ export interface ChangeProposal {
   patch?: ChangeProposalPatch
   commit?: ChangeProposalCommit
   landing?: ChangeProposalLanding
+}
+
+export interface ChangeProposalSummary {
+  proposalId: string
+  intent: string
+  status: ChangeProposalStatus
+  operationStatus: ChangeProposalOperationStatus
+  targetCount: number
+  confirmedTargetCount: number
+  createdAt: string
+  expiresAt: string
+  executionStatus: ChangeProposalExecutionStatus
+  patchApplied: boolean
+  commitCreated: boolean
+  sourceLanded: boolean
+  pushPerformed: false
+  patch?: {
+    patchId: string
+    status: ChangeProposalPatchStatus
+    executionStatus: ChangeProposalPatchExecutionStatus
+    verificationStatus: ChangeProposalVerificationStatus
+  }
+  commit?: {
+    commitId: string
+    status: ChangeProposalCommitStatus
+    executionStatus: ChangeProposalCommitExecutionStatus
+    revision?: string
+  }
+  landing?: {
+    landingId: string
+    status: ChangeProposalLandingStatus
+    executionStatus: ChangeProposalLandingExecutionStatus
+    landedRevision?: string
+  }
+}
+
+export interface ChangeProposalListResult {
+  status: 'available' | 'blocked'
+  reason: string
+  proposals: ChangeProposalSummary[]
+  total: number
+  returned: number
+  truncated: boolean
+  sessionOnly: true
 }
 
 export interface ChangeProposalResult {

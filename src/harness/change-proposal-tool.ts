@@ -5,11 +5,11 @@ import type { HarnessTool, HarnessToolExecution } from './public.ts'
 export function createChangeProposalTool(manager: ChangeProposalManager, verificationRunner?: ChangeProposalVerificationRunner, commitAuthorizer?: ChangeProposalCommitAuthorizer, landingAuthorizer?: ChangeProposalLandingAuthorizer): HarnessTool {
   return {
     name: 'repo_atlas_change_proposal',
-    description: '准备、审阅、导出、确认、拒绝或释放当前 session 的隔离代码变更提案；支持显式确认后将有界补丁应用到隔离 worktree、创建本地 detached-worktree commit，并可在 Harness 审批后 fast-forward 落地到 source workspace；不会解决冲突、访问 remote 或推送。',
+    description: '查询、列举、准备、审阅、导出、确认、拒绝或释放当前 session 的隔离代码变更提案；支持显式确认后将有界补丁应用到隔离 worktree、创建本地 detached-worktree commit，并可在 Harness 审批后 fast-forward 落地到 source workspace；不会解决冲突、访问 remote 或推送。',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['prepare', 'confirm', 'reject', 'release', 'prepare-patch', 'review-patch', 'export-patch', 'confirm-patch', 'reject-patch', 'verify-patch', 'prepare-commit', 'confirm-commit', 'reject-commit', 'prepare-landing', 'confirm-landing', 'reject-landing'] },
+        action: { type: 'string', enum: ['prepare', 'inspect', 'list', 'confirm', 'reject', 'release', 'prepare-patch', 'review-patch', 'export-patch', 'confirm-patch', 'reject-patch', 'verify-patch', 'prepare-commit', 'confirm-commit', 'reject-commit', 'prepare-landing', 'confirm-landing', 'reject-landing'] },
         sessionId: { type: 'string' },
         intent: { type: 'string' },
         targets: { type: 'array' },
@@ -25,6 +25,7 @@ export function createChangeProposalTool(manager: ChangeProposalManager, verific
         commitMessage: { type: 'string', description: '显式提供的 bounded、非 secret-like 本地 commit message' },
         landingId: { type: 'string' },
         landingConfirmationDigest: { type: 'string' },
+        limit: { type: 'number', description: 'session-only proposal summary 数量上限，1 到 100；缺省为 50' },
       },
       additionalProperties: false,
     },
@@ -38,6 +39,11 @@ export function createChangeProposalTool(manager: ChangeProposalManager, verific
     async execute(input: unknown, execution?: HarnessToolExecution) {
       const request = proposalInput(input)
       const signal = execution?.signal ?? new AbortController().signal
+      if (request.action === 'list') return manager.list({ limit: request.invalidLimit ? Number.NaN : request.limit })
+      if (request.action === 'inspect') {
+        if (!request.proposalId) return { status: 'blocked', operationStatus: 'blocked', reason: 'inspect requires proposalId' }
+        return manager.inspect(request.proposalId)
+      }
       if (request.action === 'prepare') {
         if (!request.request) return { status: 'blocked', operationStatus: 'blocked', reason: 'prepare requires sessionId, intent, and targets' }
         return manager.prepare(request.request, signal)
@@ -103,7 +109,7 @@ export function createChangeProposalTool(manager: ChangeProposalManager, verific
 }
 
 function proposalInput(input: unknown): {
-  action: 'prepare' | 'confirm' | 'reject' | 'release' | 'prepare-patch' | 'review-patch' | 'export-patch' | 'confirm-patch' | 'reject-patch' | 'verify-patch' | 'prepare-commit' | 'confirm-commit' | 'reject-commit' | 'prepare-landing' | 'confirm-landing' | 'reject-landing'
+  action: 'prepare' | 'inspect' | 'list' | 'confirm' | 'reject' | 'release' | 'prepare-patch' | 'review-patch' | 'export-patch' | 'confirm-patch' | 'reject-patch' | 'verify-patch' | 'prepare-commit' | 'confirm-commit' | 'reject-commit' | 'prepare-landing' | 'confirm-landing' | 'reject-landing'
   request?: ChangeProposalRequest
   proposalId?: string
   confirmationDigest?: string
@@ -116,13 +122,16 @@ function proposalInput(input: unknown): {
   commitMessage?: string
   landingId?: string
   landingConfirmationDigest?: string
+  limit?: number
+  invalidLimit: boolean
 } {
-  if (!isRecord(input)) return { action: 'prepare' }
-  const action = input.action === 'confirm' || input.action === 'reject' || input.action === 'release' || input.action === 'prepare-patch' || input.action === 'review-patch' || input.action === 'export-patch' || input.action === 'confirm-patch' || input.action === 'reject-patch' || input.action === 'verify-patch' || input.action === 'prepare-commit' || input.action === 'confirm-commit' || input.action === 'reject-commit' || input.action === 'prepare-landing' || input.action === 'confirm-landing' || input.action === 'reject-landing' ? input.action : 'prepare'
+  if (!isRecord(input)) return { action: 'prepare', invalidLimit: false }
+  const action = input.action === 'inspect' || input.action === 'list' || input.action === 'confirm' || input.action === 'reject' || input.action === 'release' || input.action === 'prepare-patch' || input.action === 'review-patch' || input.action === 'export-patch' || input.action === 'confirm-patch' || input.action === 'reject-patch' || input.action === 'verify-patch' || input.action === 'prepare-commit' || input.action === 'confirm-commit' || input.action === 'reject-commit' || input.action === 'prepare-landing' || input.action === 'confirm-landing' || input.action === 'reject-landing' ? input.action : 'prepare'
   const sessionId = typeof input.sessionId === 'string' ? input.sessionId : ''
   const intent = typeof input.intent === 'string' ? input.intent : ''
   const targets = Array.isArray(input.targets) ? input.targets.flatMap(parseTarget) : []
   const evidenceIds = Array.isArray(input.evidenceIds) ? input.evidenceIds.filter((value): value is string => typeof value === 'string') : undefined
+  const hasLimit = Object.prototype.hasOwnProperty.call(input, 'limit')
   return {
     action,
     request: action === 'prepare' ? { sessionId, intent, targets, evidenceIds } : undefined,
@@ -137,6 +146,8 @@ function proposalInput(input: unknown): {
     commitMessage: typeof input.commitMessage === 'string' ? input.commitMessage : undefined,
     landingId: typeof input.landingId === 'string' ? input.landingId : undefined,
     landingConfirmationDigest: typeof input.landingConfirmationDigest === 'string' ? input.landingConfirmationDigest : undefined,
+    limit: typeof input.limit === 'number' ? input.limit : undefined,
+    invalidLimit: hasLimit && typeof input.limit !== 'number',
   }
 }
 
