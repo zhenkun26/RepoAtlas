@@ -6,6 +6,7 @@ import { apply } from '../src/harness/plugin.ts'
 test('Harness adapter registers read-only analysis and session-only proposal tools', async () => {
   const registered: Array<{
     name: string
+    parameters: Record<string, unknown>
     output: { schema: Record<string, unknown>; render(args: unknown, value: unknown): Array<{ type: 'text'; text: string }> }
     execute(input: unknown): Promise<unknown>
   }> = []
@@ -16,6 +17,9 @@ test('Harness adapter registers read-only analysis and session-only proposal too
   const proposal = registered.find((tool) => tool.name === 'repo_atlas_change_proposal')
   assert.ok(analysis)
   assert.ok(proposal)
+  assert.match(JSON.stringify(proposal.parameters), /prepare-patch/)
+  assert.match(JSON.stringify(proposal.parameters), /confirm-patch/)
+  assert.match(JSON.stringify(proposal.parameters), /reject-patch/)
   assert.deepEqual(analysis.output.schema, { type: 'object' })
   assert.match(analysis.output.render({}, { policy: 'readonly' })[0]?.text ?? '', /"policy": "readonly"/)
   const clarification = await analysis.execute({}) as { clarification?: { question?: { field?: string } } }

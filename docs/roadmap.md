@@ -14,5 +14,6 @@
 2. v1.2（已完成 OpenSpec 边界）：加入仅限 session 的增量地图与 evidence cache，只重新读取新增、变化、metadata 不可用或被追问覆盖的范围；缓存不持久化、不跨 session、不联网，metadata 新鲜度限制已记录。
 3. v1.3（当前实现）：按语言接入受安全边界和预算约束的 TypeScript/JavaScript 语法确认，区分“文本推测”和“语法确认”的关系；AST evidence 仅限当前 session，并与 metadata cache 共同失效。
 4. v2（已完成）：在独立工作树中提供用户确认后的代码变更提案，仍然默认不提交、不推送；提案状态、worktree 生命周期和证据引用限制在当前 session，不自动生成或应用补丁。
+5. v2.1（已实现，待归档）：接收用户或宿主显式提供的有界 unified diff，在 confirmed proposal 的隔离 worktree 中经过二次 digest 确认后应用；继续禁止 source workspace 写入、自动回滚、commit、push、部署、依赖安装和网络访问。
 
 每个版本都应先更新安全边界、预算、部分失败语义和验收 fixture，再扩展工具权限。

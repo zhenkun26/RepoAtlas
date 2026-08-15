@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -10,6 +10,10 @@ import { isPathCoveredByScope } from './evidence-cache.ts'
 import type {
   AnalysisSession,
   ChangeProposal,
+  ChangeProposalPatch,
+  ChangeProposalPatchFileSummary,
+  ChangeProposalPatchRequest,
+  ChangeProposalPatchSummary,
   ChangeProposalOperation,
   ChangeProposalRequest,
   ChangeProposalResult,
@@ -25,6 +29,10 @@ export interface ChangeProposalLimits {
   maxEvidenceIds: number
   maxTextBytes: number
   expirationMs: number
+  maxPatchBytes: number
+  maxPatchFiles: number
+  maxPatchHunks: number
+  maxPatchLineBytes: number
 }
 
 export const DEFAULT_CHANGE_PROPOSAL_LIMITS: ChangeProposalLimits = {
@@ -32,6 +40,10 @@ export const DEFAULT_CHANGE_PROPOSAL_LIMITS: ChangeProposalLimits = {
   maxEvidenceIds: 64,
   maxTextBytes: 4_096,
   expirationMs: 15 * 60 * 1_000,
+  maxPatchBytes: 128 * 1_024,
+  maxPatchFiles: 32,
+  maxPatchHunks: 128,
+  maxPatchLineBytes: 8 * 1_024,
 }
 
 interface RepositoryRevision {
@@ -41,13 +53,36 @@ interface RepositoryRevision {
 
 interface InspectedWorktree extends ChangeProposalWorktree {
   dirty: boolean
+  changedPaths: string[]
 }
 
 export interface GitWorktreeAdapter {
   discover(workspaceRoot: string, signal?: AbortSignal): Promise<RepositoryRevision>
   create(repositoryRoot: string, baseRevision: string, signal?: AbortSignal): Promise<ChangeProposalWorktree>
   inspect(repositoryRoot: string, worktree: ChangeProposalWorktree, signal?: AbortSignal): Promise<InspectedWorktree>
+  applyPatch(repositoryRoot: string, worktree: ChangeProposalWorktree, patchText: string, workspaceRelativeRoot: string, signal?: AbortSignal): Promise<void>
   remove(repositoryRoot: string, worktree: ChangeProposalWorktree, signal?: AbortSignal): Promise<void>
+}
+
+interface StoredPatchDraft {
+  proposalId: string
+  patchText: string
+  patch: ChangeProposalPatch
+}
+
+interface ParsedPatch {
+  canonicalText: string
+  summary: ChangeProposalPatchSummary
+}
+
+class PatchApplicationError extends Error {
+  readonly uncertain: boolean
+
+  constructor(message: string, uncertain: boolean) {
+    super(message)
+    this.name = 'PatchApplicationError'
+    this.uncertain = uncertain
+  }
 }
 
 export interface ChangeProposalManagerOptions {
@@ -58,6 +93,7 @@ export interface ChangeProposalManagerOptions {
 export class ChangeProposalManager {
   private readonly sessions = new Map<string, AnalysisSession>()
   private readonly proposals = new Map<string, ChangeProposal>()
+  private readonly patches = new Map<string, StoredPatchDraft>()
   private readonly config: RepoAtlasConfig
   private readonly adapter: GitWorktreeAdapter
   private readonly limits: ChangeProposalLimits
@@ -165,6 +201,105 @@ export class ChangeProposalManager {
     }
   }
 
+  async preparePatch(request: ChangeProposalPatchRequest, signal?: AbortSignal): Promise<ChangeProposalResult> {
+    if (signal?.aborted) return blockedResult('interrupted', 'patch preparation was interrupted before validation')
+    const proposal = this.proposals.get(request.proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal is unknown to the current session')
+    if (proposal.status !== 'confirmed' || !proposal.worktree) return resultFor(proposal, 'patches require a confirmed proposal with a managed worktree')
+    if (proposal.patch) return resultFor(proposal, 'this proposal already has a patch draft; terminal patch states are not replayable')
+    const session = this.sessions.get(proposal.sessionId)
+    if (!session) return resultFor(proposal, 'the analysis session for this proposal is no longer available')
+    let inspected: InspectedWorktree
+    try {
+      inspected = await this.adapter.inspect(proposal.repositoryRoot, proposal.worktree, signal)
+    } catch (error) {
+      return resultFor(proposal, `patch worktree inspection failed: ${redactError(error)}`)
+    }
+    if (inspected.identity !== proposal.worktree.identity) return resultFor(proposal, 'worktree identity no longer matches the session-owned worktree')
+    if (inspected.baseRevision !== proposal.baseRevision) return resultFor(proposal, 'worktree base revision no longer matches the proposal')
+    if (inspected.dirty || inspected.changedPaths.length > 0) return resultFor(proposal, 'patch preparation requires a clean worktree')
+
+    const validation = validatePatch(request.patchText, proposal, session, this.config, this.limits)
+    if (!validation.parsed) return resultFor(proposal, validation.reason)
+    const patch: ChangeProposalPatch = {
+      patchId: `patch-${randomUUID()}`,
+      confirmationDigest: '',
+      status: 'awaiting-confirmation',
+      summary: validation.parsed.summary,
+      limitations: [],
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + this.limits.expirationMs).toISOString(),
+      executionStatus: 'patch-not-applied',
+    }
+    patch.confirmationDigest = createPatchDigest(proposal, patch, validation.parsed.canonicalText)
+    proposal.patch = patch
+    proposal.operationStatus = 'patch-awaiting-confirmation'
+    this.patches.set(patch.patchId, { proposalId: proposal.proposalId, patchText: validation.parsed.canonicalText, patch })
+    return resultFor(proposal, 'patch draft prepared; exact patch digest confirmation is required before application')
+  }
+
+  async confirmPatch(patchId: string, confirmationDigest: string, signal?: AbortSignal): Promise<ChangeProposalResult> {
+    const draft = this.patches.get(patchId)
+    if (!draft) return blockedResult('blocked', 'patch draft is unknown to the current session')
+    const proposal = this.proposals.get(draft.proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal for this patch draft is no longer available')
+    if (draft.patch.status !== 'awaiting-confirmation') return resultFor(proposal, 'patch draft is no longer awaiting confirmation')
+    if (signal?.aborted) return updatePatchFailure(proposal, draft.patch, 'interrupted', 'patch confirmation was interrupted before application')
+    if (Date.now() >= Date.parse(draft.patch.expiresAt)) return updatePatchFailure(proposal, draft.patch, 'blocked', 'patch confirmation window has expired')
+    if (!sameDigest(draft.patch.confirmationDigest, confirmationDigest)) return resultFor(proposal, 'patch confirmation digest does not match the pending draft')
+    if (proposal.status !== 'confirmed' || !proposal.worktree) return updatePatchFailure(proposal, draft.patch, 'blocked', 'the proposal worktree is no longer available for patch application')
+
+    let inspected: InspectedWorktree
+    try {
+      inspected = await this.adapter.inspect(proposal.repositoryRoot, proposal.worktree, signal)
+    } catch (error) {
+      return updatePatchFailure(proposal, draft.patch, signal?.aborted ? 'interrupted' : 'blocked', `live patch worktree inspection failed: ${redactError(error)}`)
+    }
+    if (inspected.identity !== proposal.worktree.identity) return updatePatchFailure(proposal, draft.patch, 'blocked', 'worktree identity no longer matches the session-owned worktree')
+    if (inspected.baseRevision !== proposal.baseRevision) return updatePatchFailure(proposal, draft.patch, 'blocked', 'worktree base revision no longer matches the proposal')
+    if (inspected.dirty || inspected.changedPaths.length > 0) return updatePatchFailure(proposal, draft.patch, 'blocked', 'patch application requires a clean worktree')
+
+    try {
+      await this.adapter.applyPatch(proposal.repositoryRoot, proposal.worktree, draft.patchText, workspaceRelativeRoot(proposal), signal)
+    } catch (error) {
+      const uncertain = error instanceof PatchApplicationError && error.uncertain
+      draft.patch.status = signal?.aborted ? 'interrupted' : 'blocked'
+      draft.patch.executionStatus = uncertain ? 'patch-application-unknown' : 'patch-not-applied'
+      proposal.executionStatus.patch = draft.patch.executionStatus
+      proposal.operationStatus = 'blocked'
+      return resultFor(proposal, `isolated patch application failed${uncertain ? '; application result is unknown and the worktree was retained' : ''}: ${redactError(error)}`)
+    }
+
+    let after: InspectedWorktree
+    try {
+      after = await this.adapter.inspect(proposal.repositoryRoot, proposal.worktree, signal)
+    } catch (error) {
+      return updatePatchFailure(proposal, draft.patch, signal?.aborted ? 'interrupted' : 'blocked', `patch postcondition inspection failed; application result is unknown and the worktree was retained: ${redactError(error)}`, 'patch-application-unknown')
+    }
+    const changedPaths = workspaceChangedPaths(proposal, after)
+    const expectedPaths = new Set(draft.patch.summary.files.map((file) => file.relativePath))
+    if (!changedPaths.length || changedPaths.some((changedPath) => !expectedPaths.has(changedPath))) {
+      return updatePatchFailure(proposal, draft.patch, 'blocked', 'patch postcondition did not prove that only declared targets changed; the worktree was retained', 'patch-application-unknown')
+    }
+    draft.patch.status = 'applied'
+    draft.patch.executionStatus = 'patch-applied'
+    proposal.executionStatus.patch = 'patch-applied'
+    proposal.operationStatus = 'patch-applied'
+    proposal.patchApplied = true
+    return resultFor(proposal, 'patch applied to the isolated worktree; commit and push were not performed')
+  }
+
+  rejectPatch(patchId: string): ChangeProposalResult {
+    const draft = this.patches.get(patchId)
+    if (!draft) return blockedResult('blocked', 'patch draft is unknown to the current session')
+    const proposal = this.proposals.get(draft.proposalId)
+    if (!proposal) return blockedResult('blocked', 'proposal for this patch draft is no longer available')
+    if (draft.patch.status !== 'awaiting-confirmation') return resultFor(proposal, 'patch draft is no longer awaiting confirmation')
+    draft.patch.status = 'rejected'
+    proposal.operationStatus = 'patch-rejected'
+    return resultFor(proposal, 'patch draft rejected; no files were modified')
+  }
+
   reject(proposalId: string): ChangeProposalResult {
     const proposal = this.proposals.get(proposalId)
     if (!proposal) return blockedResult('blocked', 'proposal is unknown to the current session')
@@ -225,7 +360,25 @@ export function createNodeGitWorktreeAdapter(): GitWorktreeAdapter {
       const record = parseWorktreeListing(listing, canonicalTarget)
       if (!record || record.baseRevision !== worktree.baseRevision) throw new Error('managed worktree is not present at the expected revision')
       const status = await runGit(['-C', worktree.path, 'status', '--porcelain', '--untracked-files=all'], worktree.path, signal)
-      return { ...worktree, path: canonicalTarget, identity: worktreeIdentity(canonicalTarget, record.baseRevision), dirty: status.length > 0 }
+      const trackedChanges = await runGit(['-C', worktree.path, 'diff', '--name-only', '--no-ext-diff'], worktree.path, signal)
+      const untrackedChanges = await runGit(['-C', worktree.path, 'ls-files', '--others', '--exclude-standard'], worktree.path, signal)
+      return {
+        ...worktree,
+        path: canonicalTarget,
+        identity: worktreeIdentity(canonicalTarget, record.baseRevision),
+        dirty: status.length > 0,
+        changedPaths: uniquePaths([...trackedChanges.split('\n'), ...untrackedChanges.split('\n')]),
+      }
+    },
+    async applyPatch(_repositoryRoot, worktree, patchText, workspaceRelativeRoot, signal) {
+      const patchCwd = path.resolve(worktree.path, workspaceRelativeRoot || '.')
+      if (!isWithin(worktree.path, patchCwd)) throw new Error('patch working directory is outside the managed worktree')
+      await runGitWithInput(['-C', patchCwd, 'apply', '--check', '--whitespace=error'], patchCwd, patchText, signal)
+      try {
+        await runGitWithInput(['-C', patchCwd, 'apply', '--whitespace=error'], patchCwd, patchText, signal)
+      } catch (error) {
+        throw new PatchApplicationError(redactError(error), true)
+      }
     },
     async remove(repositoryRoot, worktree, signal) {
       await runGit(['-C', repositoryRoot, 'worktree', 'remove', worktree.path], repositoryRoot, signal)
@@ -337,6 +490,225 @@ async function runGit(args: readonly string[], cwd: string, signal?: AbortSignal
   return result.stdout.trim()
 }
 
+function runGitWithInput(args: readonly string[], cwd: string, input: string, signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('Git operation was interrupted'))
+      return
+    }
+    const child = spawn('git', [...args], {
+      cwd,
+      shell: false,
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    const finish = (callback: () => void): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', onAbort)
+      callback()
+    }
+    const onAbort = (): void => {
+      child.kill('SIGTERM')
+      finish(() => reject(new Error('Git operation was interrupted')))
+    }
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM')
+      finish(() => reject(new Error('Git operation timed out')))
+    }, 15_000)
+    child.stdout.on('data', (chunk: Buffer | string) => {
+      stdout += chunk.toString()
+      if (Buffer.byteLength(stdout) > 128 * 1024) {
+        child.kill('SIGTERM')
+        finish(() => reject(new Error('Git output exceeded the bounded limit')))
+      }
+    })
+    child.stderr.on('data', (chunk: Buffer | string) => {
+      stderr += chunk.toString()
+      if (Buffer.byteLength(stderr) > 128 * 1024) {
+        child.kill('SIGTERM')
+        finish(() => reject(new Error('Git error output exceeded the bounded limit')))
+      }
+    })
+    child.on('error', (error) => finish(() => reject(error)))
+    child.on('close', (code, signalName) => {
+      finish(() => {
+        if (code === 0) {
+          resolve(stdout.trim())
+          return
+        }
+        reject(new Error(stderr.trim() || `Git exited with ${signalName ?? `code ${code ?? 'unknown'}`}`))
+      })
+    })
+    signal?.addEventListener('abort', onAbort, { once: true })
+    child.stdin.end(input)
+  })
+}
+
+function validatePatch(
+  patchText: string,
+  proposal: ChangeProposal,
+  session: AnalysisSession,
+  config: RepoAtlasConfig,
+  limits: ChangeProposalLimits,
+): { parsed: ParsedPatch } | { parsed?: undefined; reason: string } {
+  if (typeof patchText !== 'string' || !patchText.trim()) return { reason: 'patch text is required' }
+  const canonicalText = patchText.replaceAll('\r\n', '\n').replaceAll('\r', '\n')
+  if (canonicalText.includes('\0')) return { reason: 'patch text contains a NUL byte' }
+  const normalizedText = canonicalText.endsWith('\n') ? canonicalText : `${canonicalText}\n`
+  if (Buffer.byteLength(normalizedText) > limits.maxPatchBytes) return { reason: 'patch byte budget exhausted' }
+  const secretCheck = redactSecretLike(normalizedText)
+  if (secretCheck.redacted) return { reason: 'patch text contains secret-like content and was rejected' }
+  const parsed = parsePatchText(normalizedText, limits)
+  if (!parsed.parsed) return parsed
+
+  const targetMap = new Map(proposal.targets.filter((target) => target.status === 'confirmed').map((target) => [target.relativePath, target]))
+  for (const file of parsed.parsed.summary.files) {
+    const check = checkWorkspacePath(proposal.workspaceRoot, file.relativePath)
+    if (!check.allowed) return { reason: `${file.relativePath}: ${check.reason}` }
+    if (isSensitivePath(file.relativePath, config.sensitiveFilePatterns)) return { reason: `${file.relativePath}: sensitive path is not eligible for patch application` }
+    if (config.excludeDirs.includes(file.relativePath.split('/')[0] ?? '')) return { reason: `${file.relativePath}: excluded directory is not eligible for patch application` }
+    if (!isPathCoveredByScope(file.relativePath, session.goal.scope)) return { reason: `${file.relativePath}: outside the confirmed GoalSpec scope` }
+    const target = targetMap.get(file.relativePath)
+    if (!target || target.operation !== file.operation) return { reason: `${file.relativePath}: patch operation is not covered by the confirmed proposal target` }
+  }
+  return parsed
+}
+
+function parsePatchText(patchText: string, limits: ChangeProposalLimits): { parsed: ParsedPatch } | { parsed?: undefined; reason: string } {
+  const lines = patchText.slice(-1) === '\n' ? patchText.slice(0, -1).split('\n') : patchText.split('\n')
+  if (!lines.length || !lines[0]?.startsWith('diff --git ')) return { reason: 'patch must start with a supported diff --git header' }
+  for (const line of lines) {
+    if (Buffer.byteLength(line) > limits.maxPatchLineBytes) return { reason: 'patch line-length budget exhausted' }
+  }
+  const starts = lines.flatMap((line, index) => line.startsWith('diff --git ') ? [index] : [])
+  if (starts.length === 0 || starts[0] !== 0) return { reason: 'patch contains unsupported content before the first diff block' }
+  if (starts.length > limits.maxPatchFiles) return { reason: 'patch file budget exhausted' }
+
+  const files: ChangeProposalPatchFileSummary[] = []
+  let totalHunks = 0
+  for (let blockIndex = 0; blockIndex < starts.length; blockIndex += 1) {
+    const start = starts[blockIndex] ?? 0
+    const end = starts[blockIndex + 1] ?? lines.length
+    const block = lines.slice(start, end)
+    const header = /^diff --git a\/(.+) b\/(.+)$/.exec(block[0] ?? '')
+    if (!header || header[1] !== header[2]) return { reason: 'patch contains unsupported rename, copy, or quoted diff header' }
+    if (block.some((line) => /^(?:Binary files|GIT binary patch|rename from |rename to |copy from |copy to |similarity index |old mode |new mode |Subproject commit )/.test(line))) {
+      return { reason: 'patch contains unsupported binary, rename, mode, or submodule metadata' }
+    }
+    const oldHeader = block.find((line) => line.startsWith('--- '))
+    const newHeader = block.find((line) => line.startsWith('+++ '))
+    const oldPath = parsePatchPath(oldHeader, '--- ', 'a/')
+    const newPath = parsePatchPath(newHeader, '+++ ', 'b/')
+    if (oldPath === undefined || newPath === undefined || (oldPath === null && newPath === null)) return { reason: 'patch has invalid unified-diff file headers' }
+    const relativePath = oldPath ?? newPath
+    if (relativePath !== header[1]) return { reason: 'patch diff header and unified file header do not match' }
+    const operation: ChangeProposalOperation = oldPath === null ? 'add' : newPath === null ? 'delete' : 'modify'
+    if (block.some((line) => line.startsWith('new file mode ')) && operation !== 'add') return { reason: 'new file metadata does not match patch operation' }
+    if (block.some((line) => line.startsWith('deleted file mode ')) && operation !== 'delete') return { reason: 'deleted file metadata does not match patch operation' }
+
+    let hunks = 0
+    let additions = 0
+    let deletions = 0
+    let inHunk = false
+    for (const line of block.slice(Math.max(block.indexOf(newHeader ?? ''), 0) + 1)) {
+      if (line.startsWith('@@ ')) {
+        if (!/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(?: .*)?$/.test(line)) return { reason: 'patch contains an invalid hunk header' }
+        hunks += 1
+        totalHunks += 1
+        if (totalHunks > limits.maxPatchHunks) return { reason: 'patch hunk budget exhausted' }
+        inHunk = true
+        continue
+      }
+      if (!inHunk) {
+        if (line.startsWith('index ') || line.startsWith('new file mode ') || line.startsWith('deleted file mode ')) continue
+        return { reason: 'patch contains unsupported metadata' }
+      }
+      if (line === '\\ No newline at end of file') continue
+      if (line.startsWith('+')) additions += 1
+      else if (line.startsWith('-')) deletions += 1
+      else if (line.startsWith(' ')) continue
+      else return { reason: 'patch contains an unsupported hunk line' }
+    }
+    if (hunks === 0) return { reason: 'patch file has no hunks' }
+    files.push({ relativePath, operation, additions, deletions, hunks })
+  }
+  const duplicate = files.find((file, index) => files.findIndex((candidate) => candidate.relativePath === file.relativePath) !== index)
+  if (duplicate) return { reason: `patch contains a duplicate target: ${duplicate.relativePath}` }
+  return {
+    parsed: {
+      canonicalText: patchText,
+      summary: {
+        bytes: Buffer.byteLength(patchText),
+        files,
+        hunks: totalHunks,
+        changedLines: files.reduce((total, file) => total + file.additions + file.deletions, 0),
+      },
+    },
+  }
+}
+
+function parsePatchPath(line: string | undefined, marker: string, prefix: string): string | null | undefined {
+  if (!line?.startsWith(marker)) return undefined
+  const value = line.slice(marker.length).split('\t', 1)[0] ?? ''
+  if (value === '/dev/null') return null
+  if (!value.startsWith(prefix) || value.length <= prefix.length) return undefined
+  return value.slice(prefix.length)
+}
+
+function createPatchDigest(proposal: ChangeProposal, patch: ChangeProposalPatch, patchText: string): string {
+  const payload = JSON.stringify({
+    patchId: patch.patchId,
+    proposalId: proposal.proposalId,
+    proposalDigest: proposal.confirmationDigest,
+    baseRevision: proposal.baseRevision,
+    worktreeIdentity: proposal.worktree?.identity,
+    summary: patch.summary,
+    patchText,
+  })
+  return createHash('sha256').update(payload).digest('hex')
+}
+
+function updatePatchFailure(
+  proposal: ChangeProposal,
+  patch: ChangeProposalPatch,
+  status: 'blocked' | 'interrupted',
+  reason: string,
+  executionStatus: ChangeProposalPatch['executionStatus'] = 'patch-not-applied',
+): ChangeProposalResult {
+  patch.status = status
+  patch.executionStatus = executionStatus
+  proposal.executionStatus.patch = executionStatus
+  proposal.operationStatus = 'blocked'
+  return resultFor(proposal, reason)
+}
+
+function workspaceRelativeRoot(proposal: ChangeProposal): string {
+  const relative = path.relative(path.resolve(proposal.repositoryRoot), path.resolve(proposal.workspaceRoot))
+  if (path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) throw new Error('proposal workspace is outside the repository root')
+  return relative
+}
+
+function workspaceChangedPaths(proposal: ChangeProposal, inspected: InspectedWorktree): string[] {
+  const relativeRoot = workspaceRelativeRoot(proposal)
+  const worktreeWorkspace = path.resolve(inspected.path, relativeRoot || '.')
+  const result: string[] = []
+  for (const repositoryPath of inspected.changedPaths) {
+    const absolute = path.resolve(inspected.path, repositoryPath)
+    if (!isWithin(worktreeWorkspace, absolute)) return [repositoryPath]
+    result.push(path.relative(worktreeWorkspace, absolute).replaceAll(path.sep, '/'))
+  }
+  return uniquePaths(result)
+}
+
+function uniquePaths(values: readonly string[]): string[] {
+  return [...new Set(values.filter((value) => value.length > 0).map((value) => value.replaceAll('\\', '/')))]
+}
+
 function boundedRedactedText(value: string, maxBytes: number): string {
   const redacted = redactSecretLike(value).text
   if (Buffer.byteLength(redacted) <= maxBytes) return redacted
@@ -382,6 +754,14 @@ function cloneProposal(proposal: ChangeProposal): ChangeProposal {
     limitations: [...proposal.limitations],
     risks: [...proposal.risks],
     worktree: proposal.worktree ? { ...proposal.worktree } : undefined,
+    patch: proposal.patch ? {
+      ...proposal.patch,
+      limitations: [...proposal.patch.limitations],
+      summary: {
+        ...proposal.patch.summary,
+        files: proposal.patch.summary.files.map((file) => ({ ...file })),
+      },
+    } : undefined,
   }
 }
 

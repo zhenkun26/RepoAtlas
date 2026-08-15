@@ -5,17 +5,20 @@ import type { HarnessTool, HarnessToolExecution } from './public.ts'
 export function createChangeProposalTool(manager: ChangeProposalManager): HarnessTool {
   return {
     name: 'repo_atlas_change_proposal',
-    description: '准备、确认、拒绝或释放当前 session 的隔离代码变更提案；不会生成补丁、提交或推送。',
+    description: '准备、确认、拒绝或释放当前 session 的隔离代码变更提案；支持显式确认后将有界补丁应用到隔离 worktree，不会提交或推送。',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['prepare', 'confirm', 'reject', 'release'] },
+        action: { type: 'string', enum: ['prepare', 'confirm', 'reject', 'release', 'prepare-patch', 'confirm-patch', 'reject-patch'] },
         sessionId: { type: 'string' },
         intent: { type: 'string' },
         targets: { type: 'array' },
         evidenceIds: { type: 'array' },
         proposalId: { type: 'string' },
         confirmationDigest: { type: 'string' },
+        patchId: { type: 'string' },
+        patchText: { type: 'string' },
+        patchConfirmationDigest: { type: 'string' },
       },
       additionalProperties: false,
     },
@@ -33,6 +36,18 @@ export function createChangeProposalTool(manager: ChangeProposalManager): Harnes
         if (!request.request) return { status: 'blocked', operationStatus: 'blocked', reason: 'prepare requires sessionId, intent, and targets' }
         return manager.prepare(request.request, signal)
       }
+      if (request.action === 'prepare-patch') {
+        if (!request.proposalId || request.patchText === undefined) return { status: 'blocked', operationStatus: 'blocked', reason: 'prepare-patch requires proposalId and patchText' }
+        return manager.preparePatch({ proposalId: request.proposalId, patchText: request.patchText }, signal)
+      }
+      if (request.action === 'confirm-patch') {
+        if (!request.patchId) return { status: 'blocked', operationStatus: 'blocked', reason: 'confirm-patch requires patchId' }
+        return manager.confirmPatch(request.patchId, request.patchConfirmationDigest ?? '', signal)
+      }
+      if (request.action === 'reject-patch') {
+        if (!request.patchId) return { status: 'blocked', operationStatus: 'blocked', reason: 'reject-patch requires patchId' }
+        return manager.rejectPatch(request.patchId)
+      }
       if (!request.proposalId) return { status: 'blocked', operationStatus: 'blocked', reason: `${request.action} requires proposalId` }
       if (request.action === 'confirm') return manager.confirm(request.proposalId, request.confirmationDigest ?? '', signal)
       if (request.action === 'reject') return manager.reject(request.proposalId)
@@ -42,13 +57,16 @@ export function createChangeProposalTool(manager: ChangeProposalManager): Harnes
 }
 
 function proposalInput(input: unknown): {
-  action: 'prepare' | 'confirm' | 'reject' | 'release'
+  action: 'prepare' | 'confirm' | 'reject' | 'release' | 'prepare-patch' | 'confirm-patch' | 'reject-patch'
   request?: ChangeProposalRequest
   proposalId?: string
   confirmationDigest?: string
+  patchId?: string
+  patchText?: string
+  patchConfirmationDigest?: string
 } {
   if (!isRecord(input)) return { action: 'prepare' }
-  const action = input.action === 'confirm' || input.action === 'reject' || input.action === 'release' ? input.action : 'prepare'
+  const action = input.action === 'confirm' || input.action === 'reject' || input.action === 'release' || input.action === 'prepare-patch' || input.action === 'confirm-patch' || input.action === 'reject-patch' ? input.action : 'prepare'
   const sessionId = typeof input.sessionId === 'string' ? input.sessionId : ''
   const intent = typeof input.intent === 'string' ? input.intent : ''
   const targets = Array.isArray(input.targets) ? input.targets.flatMap(parseTarget) : []
@@ -58,6 +76,9 @@ function proposalInput(input: unknown): {
     request: action === 'prepare' ? { sessionId, intent, targets, evidenceIds } : undefined,
     proposalId: typeof input.proposalId === 'string' ? input.proposalId : undefined,
     confirmationDigest: typeof input.confirmationDigest === 'string' ? input.confirmationDigest : undefined,
+    patchId: typeof input.patchId === 'string' ? input.patchId : undefined,
+    patchText: typeof input.patchText === 'string' ? input.patchText : undefined,
+    patchConfirmationDigest: typeof input.patchConfirmationDigest === 'string' ? input.patchConfirmationDigest : undefined,
   }
 }
 

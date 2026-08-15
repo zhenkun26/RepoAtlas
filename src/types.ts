@@ -270,7 +270,17 @@ export type ChangeProposalOperation = 'add' | 'modify' | 'delete'
 
 export type ChangeProposalStatus = 'awaiting-confirmation' | 'confirmed' | 'rejected' | 'blocked' | 'interrupted' | 'released'
 
-export type ChangeProposalOperationStatus = 'proposal' | 'worktree-created' | 'patch-not-applied' | 'commit-not-created' | 'push-not-performed' | 'blocked' | 'released'
+export type ChangeProposalOperationStatus =
+  | 'proposal'
+  | 'worktree-created'
+  | 'patch-awaiting-confirmation'
+  | 'patch-applied'
+  | 'patch-rejected'
+  | 'patch-not-applied'
+  | 'commit-not-created'
+  | 'push-not-performed'
+  | 'blocked'
+  | 'released'
 
 export interface ChangeProposalTargetRequest {
   relativePath: string
@@ -283,6 +293,11 @@ export interface ChangeProposalRequest {
   intent: string
   targets: ChangeProposalTargetRequest[]
   evidenceIds?: string[]
+}
+
+export interface ChangeProposalPatchRequest {
+  proposalId: string
+  patchText: string
 }
 
 export interface ChangeProposalTarget {
@@ -299,8 +314,38 @@ export interface ChangeProposalWorktree {
   baseRevision: string
 }
 
+export type ChangeProposalPatchStatus = 'not-prepared' | 'awaiting-confirmation' | 'applied' | 'rejected' | 'blocked' | 'interrupted'
+
+export type ChangeProposalPatchExecutionStatus = 'patch-not-applied' | 'patch-applied' | 'patch-application-unknown'
+
+export interface ChangeProposalPatchFileSummary {
+  relativePath: string
+  operation: ChangeProposalOperation
+  additions: number
+  deletions: number
+  hunks: number
+}
+
+export interface ChangeProposalPatchSummary {
+  bytes: number
+  files: ChangeProposalPatchFileSummary[]
+  hunks: number
+  changedLines: number
+}
+
+export interface ChangeProposalPatch {
+  patchId: string
+  confirmationDigest: string
+  status: ChangeProposalPatchStatus
+  summary: ChangeProposalPatchSummary
+  limitations: string[]
+  createdAt: string
+  expiresAt: string
+  executionStatus: ChangeProposalPatchExecutionStatus
+}
+
 export interface ChangeProposalExecutionStatus {
-  patch: 'patch-not-applied'
+  patch: ChangeProposalPatchExecutionStatus
   commit: 'commit-not-created'
   push: 'push-not-performed'
 }
@@ -321,11 +366,12 @@ export interface ChangeProposal {
   operationStatus: ChangeProposalOperationStatus
   expiresAt: string
   executionStatus: ChangeProposalExecutionStatus
-  patchApplied: false
+  patchApplied: boolean
   commitCreated: false
   pushPerformed: false
   createdAt: string
   worktree?: ChangeProposalWorktree
+  patch?: ChangeProposalPatch
 }
 
 export interface ChangeProposalResult {

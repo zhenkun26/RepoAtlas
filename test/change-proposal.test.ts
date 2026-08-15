@@ -16,8 +16,13 @@ const fixtureRoot = path.resolve('test/fixtures/complete-repo')
 class FakeGitAdapter implements GitWorktreeAdapter {
   createCount = 0
   removeCount = 0
+  applyPatchCount = 0
   dirty = false
+  changedPaths: string[] = []
   failDiscovery = false
+  failPatch = false
+  failPostcondition = false
+  identityMismatch = false
 
   async discover(workspaceRoot: string): Promise<{ repositoryRoot: string; baseRevision: string }> {
     if (this.failDiscovery) throw new Error('git unavailable')
@@ -29,8 +34,16 @@ class FakeGitAdapter implements GitWorktreeAdapter {
     return { path: path.join(os.tmpdir(), 'repo-atlas-fake-worktree'), identity: `identity-${this.createCount}`, baseRevision }
   }
 
-  async inspect(_repositoryRoot: string, worktree: ChangeProposalWorktree): Promise<ChangeProposalWorktree & { dirty: boolean }> {
-    return { ...worktree, dirty: this.dirty }
+  async inspect(_repositoryRoot: string, worktree: ChangeProposalWorktree): Promise<ChangeProposalWorktree & { dirty: boolean; changedPaths: string[] }> {
+    if (this.failPostcondition && this.applyPatchCount > 0) throw new Error('postcondition inspection unavailable')
+    return { ...worktree, identity: this.identityMismatch ? 'identity-mismatch' : worktree.identity, dirty: this.dirty, changedPaths: [...this.changedPaths] }
+  }
+
+  async applyPatch(): Promise<void> {
+    this.applyPatchCount += 1
+    if (this.failPatch) throw new Error('patch rejected by fake Git')
+    this.dirty = true
+    this.changedPaths = ['src/index.ts']
   }
 
   async remove(): Promise<void> {
@@ -80,6 +93,16 @@ function request(overrides: Partial<ChangeProposalRequest> = {}): ChangeProposal
     evidenceIds: [],
     ...overrides,
   }
+}
+
+function validPatch(replacement = 'new'): string {
+  return `diff --git a/src/index.ts b/src/index.ts
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -1 +1 @@
+-old
++${replacement}
+`
 }
 
 test('proposal lifecycle requires exact confirmation and releases a clean owned worktree', async () => {
@@ -198,13 +221,162 @@ test('proposal confirmation expires and cannot be replayed after rejection', asy
   assert.equal(adapter.createCount, 0)
 })
 
+test('patch lifecycle requires a second exact digest and retains applied dirty worktrees', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+  const pending = await manager.prepare(request())
+  const confirmed = await manager.confirm(pending.proposal?.proposalId ?? '', pending.proposal?.confirmationDigest ?? '')
+  const draft = await manager.preparePatch({ proposalId: confirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+
+  assert.equal(draft.status, 'confirmed')
+  assert.equal(draft.operationStatus, 'patch-awaiting-confirmation')
+  assert.equal(draft.proposal?.patch?.status, 'awaiting-confirmation')
+  assert.equal(adapter.applyPatchCount, 0)
+
+  const mismatch = await manager.confirmPatch(draft.proposal?.patch?.patchId ?? '', '0'.repeat(64))
+  assert.equal(mismatch.proposal?.patch?.status, 'awaiting-confirmation')
+  assert.equal(adapter.applyPatchCount, 0)
+
+  const applied = await manager.confirmPatch(draft.proposal?.patch?.patchId ?? '', draft.proposal?.patch?.confirmationDigest ?? '')
+  assert.equal(applied.status, 'confirmed')
+  assert.equal(applied.operationStatus, 'patch-applied')
+  assert.equal(applied.proposal?.patch?.status, 'applied')
+  assert.equal(applied.proposal?.patchApplied, true)
+  assert.equal(applied.proposal?.executionStatus.patch, 'patch-applied')
+  assert.equal(applied.proposal?.commitCreated, false)
+  assert.equal(applied.proposal?.pushPerformed, false)
+  assert.equal(adapter.applyPatchCount, 1)
+
+  const replay = await manager.confirmPatch(draft.proposal?.patch?.patchId ?? '', draft.proposal?.patch?.confirmationDigest ?? '')
+  assert.equal(replay.proposal?.patch?.status, 'applied')
+  assert.equal(adapter.applyPatchCount, 1)
+
+  const release = await manager.release(draft.proposal?.proposalId ?? '')
+  assert.equal(release.status, 'blocked')
+  assert.equal(adapter.removeCount, 0)
+})
+
+test('patch validation accepts declared add/modify/delete files and rejects policy or budget violations', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+  const pending = await manager.prepare(request({
+    targets: [
+      { relativePath: 'src/index.ts', operation: 'modify' },
+      { relativePath: 'src/new.ts', operation: 'add' },
+      { relativePath: 'src/old.ts', operation: 'delete' },
+    ],
+  }))
+  const confirmed = await manager.confirm(pending.proposal?.proposalId ?? '', pending.proposal?.confirmationDigest ?? '')
+  const multiFilePatch = `${validPatch()}diff --git a/src/new.ts b/src/new.ts
+new file mode 100644
+--- /dev/null
++++ b/src/new.ts
+@@ -0,0 +1 @@
++export const created = true
+diff --git a/src/old.ts b/src/old.ts
+deleted file mode 100644
+--- a/src/old.ts
++++ /dev/null
+@@ -1 +0,0 @@
+-old
+`
+  const draft = await manager.preparePatch({ proposalId: confirmed.proposal?.proposalId ?? '', patchText: multiFilePatch })
+  assert.equal(draft.proposal?.patch?.summary.files.map((file) => file.operation).join(','), 'modify,add,delete')
+  assert.equal(draft.proposal?.patch?.summary.files.length, 3)
+
+  const invalidPathManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: new FakeGitAdapter() })
+  invalidPathManager.registerSession(createSession())
+  const invalidPending = await invalidPathManager.prepare(request())
+  const invalidConfirmed = await invalidPathManager.confirm(invalidPending.proposal?.proposalId ?? '', invalidPending.proposal?.confirmationDigest ?? '')
+  const outside = await invalidPathManager.preparePatch({ proposalId: invalidConfirmed.proposal?.proposalId ?? '', patchText: validPatch().replaceAll('src/index.ts', '../outside.ts') })
+  assert.equal(outside.proposal?.patch, undefined)
+  assert.match(outside.reason, /outside|traversal|target/)
+
+  const unsupported = await invalidPathManager.preparePatch({ proposalId: invalidConfirmed.proposal?.proposalId ?? '', patchText: validPatch().replace('--- a/src/index.ts', 'old mode 100644\n--- a/src/index.ts') })
+  assert.equal(unsupported.proposal?.patch, undefined)
+  assert.match(unsupported.reason, /unsupported|mode/)
+
+  const secret = await invalidPathManager.preparePatch({ proposalId: invalidConfirmed.proposal?.proposalId ?? '', patchText: validPatch('token = "sk-abcdefghijklmnop"') })
+  assert.equal(secret.proposal?.patch, undefined)
+  assert.match(secret.reason, /secret-like/)
+
+  const budgetManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: new FakeGitAdapter(), limits: { maxPatchBytes: 16 } })
+  budgetManager.registerSession(createSession())
+  const budgetPending = await budgetManager.prepare(request())
+  const budgetConfirmed = await budgetManager.confirm(budgetPending.proposal?.proposalId ?? '', budgetPending.proposal?.confirmationDigest ?? '')
+  const budget = await budgetManager.preparePatch({ proposalId: budgetConfirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  assert.match(budget.reason, /budget/)
+})
+
+test('patch state machine fails closed for rejection, abort, dirty worktrees, and apply failure', async () => {
+  const adapter = new FakeGitAdapter()
+  const manager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter })
+  manager.registerSession(createSession())
+  const pending = await manager.prepare(request())
+  const confirmed = await manager.confirm(pending.proposal?.proposalId ?? '', pending.proposal?.confirmationDigest ?? '')
+  adapter.dirty = true
+  const dirty = await manager.preparePatch({ proposalId: confirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  assert.equal(dirty.proposal?.patch, undefined)
+  adapter.dirty = false
+
+  const secondDraft = await manager.preparePatch({ proposalId: confirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  const rejected = manager.rejectPatch(secondDraft.proposal?.patch?.patchId ?? '')
+  assert.equal(rejected.proposal?.patch?.status, 'rejected')
+  const rejectedReplay = await manager.confirmPatch(secondDraft.proposal?.patch?.patchId ?? '', secondDraft.proposal?.patch?.confirmationDigest ?? '')
+  assert.equal(rejectedReplay.proposal?.patch?.status, 'rejected')
+  assert.equal(adapter.applyPatchCount, 0)
+
+  const thirdPending = await manager.prepare(request())
+  const thirdConfirmed = await manager.confirm(thirdPending.proposal?.proposalId ?? '', thirdPending.proposal?.confirmationDigest ?? '')
+  const thirdDraft = await manager.preparePatch({ proposalId: thirdConfirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  const aborted = new AbortController()
+  aborted.abort()
+  const interrupted = await manager.confirmPatch(thirdDraft.proposal?.patch?.patchId ?? '', thirdDraft.proposal?.patch?.confirmationDigest ?? '', aborted.signal)
+  assert.equal(interrupted.proposal?.patch?.status, 'interrupted')
+  assert.equal(adapter.applyPatchCount, 0)
+
+  const failureManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: Object.assign(new FakeGitAdapter(), { failPatch: true }) })
+  failureManager.registerSession(createSession())
+  const failurePending = await failureManager.prepare(request())
+  const failureConfirmed = await failureManager.confirm(failurePending.proposal?.proposalId ?? '', failurePending.proposal?.confirmationDigest ?? '')
+  const failureDraft = await failureManager.preparePatch({ proposalId: failureConfirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  const failed = await failureManager.confirmPatch(failureDraft.proposal?.patch?.patchId ?? '', failureDraft.proposal?.patch?.confirmationDigest ?? '')
+  assert.equal(failed.proposal?.patch?.status, 'blocked')
+  assert.equal(failed.proposal?.patch?.executionStatus, 'patch-not-applied')
+
+  const identityAdapter = new FakeGitAdapter()
+  const identityManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: identityAdapter })
+  identityManager.registerSession(createSession())
+  const identityPending = await identityManager.prepare(request())
+  const identityConfirmed = await identityManager.confirm(identityPending.proposal?.proposalId ?? '', identityPending.proposal?.confirmationDigest ?? '')
+  const identityDraft = await identityManager.preparePatch({ proposalId: identityConfirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  identityAdapter.identityMismatch = true
+  const identityBlocked = await identityManager.confirmPatch(identityDraft.proposal?.patch?.patchId ?? '', identityDraft.proposal?.patch?.confirmationDigest ?? '')
+  assert.equal(identityBlocked.proposal?.patch?.status, 'blocked')
+  assert.equal(identityAdapter.applyPatchCount, 0)
+
+  const postconditionAdapter = new FakeGitAdapter()
+  const postconditionManager = new ChangeProposalManager(createConfig(fixtureRoot), { adapter: postconditionAdapter })
+  postconditionManager.registerSession(createSession())
+  const postconditionPending = await postconditionManager.prepare(request())
+  const postconditionConfirmed = await postconditionManager.confirm(postconditionPending.proposal?.proposalId ?? '', postconditionPending.proposal?.confirmationDigest ?? '')
+  const postconditionDraft = await postconditionManager.preparePatch({ proposalId: postconditionConfirmed.proposal?.proposalId ?? '', patchText: validPatch() })
+  postconditionAdapter.failPostcondition = true
+  const unknown = await postconditionManager.confirmPatch(postconditionDraft.proposal?.patch?.patchId ?? '', postconditionDraft.proposal?.patch?.confirmationDigest ?? '')
+  assert.equal(unknown.proposal?.patch?.status, 'blocked')
+  assert.equal(unknown.proposal?.patch?.executionStatus, 'patch-application-unknown')
+  assert.equal(unknown.proposal?.executionStatus.patch, 'patch-application-unknown')
+})
+
 test('node Git adapter creates and removes a detached worktree without network access', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'repo-atlas-git-'))
   try {
     await runGit(root, ['init', '-q'])
     await runGit(root, ['config', 'user.email', 'repo-atlas@example.test'])
     await runGit(root, ['config', 'user.name', 'RepoAtlas Test'])
-    await fs.writeFile(path.join(root, 'README.md'), 'fixture')
+    await fs.writeFile(path.join(root, 'README.md'), 'fixture\n')
     await runGit(root, ['add', 'README.md'])
     await runGit(root, ['commit', '-qm', 'fixture'])
     await fs.writeFile(path.join(root, 'local-change.txt'), 'must stay in source only')
@@ -218,6 +390,19 @@ test('node Git adapter creates and removes a detached worktree without network a
     const inspected = await adapter.inspect(revision.repositoryRoot, worktree)
     assert.equal(inspected.dirty, false)
     assert.equal(inspected.identity, worktree.identity)
+    await adapter.applyPatch(revision.repositoryRoot, worktree, `diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1 +1 @@
+-fixture
++patched
+`, '')
+    assert.equal(await fs.readFile(path.join(root, 'README.md'), 'utf8'), 'fixture\n')
+    assert.equal(await fs.readFile(path.join(worktree.path, 'README.md'), 'utf8'), 'patched\n')
+    const patched = await adapter.inspect(revision.repositoryRoot, worktree)
+    assert.equal(patched.dirty, true)
+    assert.deepEqual(patched.changedPaths, ['README.md'])
+    await fs.writeFile(path.join(worktree.path, 'README.md'), 'fixture\n')
     await adapter.remove(revision.repositoryRoot, worktree)
     await assert.rejects(() => fs.access(worktree.path))
   } finally {
