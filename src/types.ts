@@ -265,3 +265,65 @@ export interface AnalysisReport {
   ast?: AstFileAnalysis[]
   incrementalSummary?: IncrementalEvidenceSummary
 }
+
+export type ChangeProposalOperation = 'add' | 'modify' | 'delete'
+
+export type ChangeProposalStatus = 'awaiting-confirmation' | 'confirmed' | 'rejected' | 'blocked' | 'interrupted' | 'released'
+
+export type ChangeProposalOperationStatus = 'proposal' | 'worktree-created' | 'patch-not-applied' | 'commit-not-created' | 'push-not-performed' | 'blocked' | 'released'
+
+export interface ChangeProposalTargetRequest {
+  relativePath: string
+  operation: ChangeProposalOperation
+  rationale?: string
+}
+
+export interface ChangeProposalRequest {
+  sessionId: string
+  intent: string
+  targets: ChangeProposalTargetRequest[]
+  evidenceIds?: string[]
+}
+
+export interface ChangeProposalTarget {
+  relativePath: string
+  operation: ChangeProposalOperation
+  rationale: string
+  status: 'confirmed' | 'uncovered' | 'budget-exhausted'
+  reason?: string
+}
+
+export interface ChangeProposalWorktree {
+  path: string
+  identity: string
+  baseRevision: string
+}
+
+export interface ChangeProposal {
+  proposalId: string
+  sessionId: string
+  workspaceRoot: string
+  repositoryRoot: string
+  baseRevision: string
+  intent: string
+  targets: ChangeProposalTarget[]
+  evidenceIds: string[]
+  limitations: string[]
+  risks: string[]
+  confirmationDigest: string
+  status: ChangeProposalStatus
+  operationStatus: ChangeProposalOperationStatus
+  expiresAt: string
+  patchApplied: false
+  commitCreated: false
+  pushPerformed: false
+  createdAt: string
+  worktree?: ChangeProposalWorktree
+}
+
+export interface ChangeProposalResult {
+  status: ChangeProposalStatus
+  operationStatus: ChangeProposalOperationStatus
+  reason: string
+  proposal?: ChangeProposal
+}

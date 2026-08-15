@@ -10,7 +10,8 @@ for (const file of files) {
   const directSpawn = capabilitySpawn.test(text)
   capabilitySpawn.lastIndex = 0
   const spawnOutsideAdapter = directSpawn && !file.endsWith('/actions/runtime.ts')
-  if ((forbidden.test(text) || spawnOutsideAdapter) && !file.includes('/reporting/report.ts')) violations.push(file)
+  const fixedGitAdapter = file.endsWith('/repository/change-proposal.ts')
+  if ((forbidden.test(text) || spawnOutsideAdapter) && !file.includes('/reporting/report.ts') && !fixedGitAdapter) violations.push(file)
 }
 if (violations.length) {
   console.error(`FAIL: forbidden side-effect token found in ${violations.join(', ')}`)

@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-08-15
+goal: 让 RepoAtlas 能在用户明确确认后于独立工作树生成有界变更提案，同时延续只读安全边界、证据链、审批和默认不提交/不推送。

@@ -3,6 +3,8 @@ import { analyzeRepository } from '../repository/analyze.ts'
 import { generateReport } from '../reporting/report.ts'
 import { createConfig } from '../config.ts'
 import { createControlledActionTool } from './controlled-tool.ts'
+import { createChangeProposalTool } from './change-proposal-tool.ts'
+import { ChangeProposalManager } from '../repository/change-proposal.ts'
 import type { GoalSpec } from '../types.ts'
 import type { HarnessPluginContext, HarnessTool, RepoAtlasPluginConfig, RepoAtlasToolResult } from './public.ts'
 
@@ -11,13 +13,16 @@ export const inject = ['tools'] as const
 
 export function apply(ctx: HarnessPluginContext, pluginConfig: RepoAtlasPluginConfig = {}): void {
   const config = createConfig(pluginConfig.workspaceRoot ?? process.cwd(), pluginConfig)
-  ctx.tools.register(createRepoAtlasTool(config.workspaceRoot, pluginConfig))
+  const proposalManager = new ChangeProposalManager(config)
+  ctx.tools.register(createRepoAtlasTool(config.workspaceRoot, pluginConfig, proposalManager))
+  ctx.tools.register(createChangeProposalTool(proposalManager))
   if (config.controlledActions.enabled) ctx.tools.register(createControlledActionTool(config, ctx))
   ctx.logger?.info('RepoAtlas registered read-only analysis tool')
+  ctx.logger?.info('RepoAtlas registered session-only change proposal tool')
   if (config.controlledActions.enabled) ctx.logger?.info('RepoAtlas registered controlled action tool with explicit approval')
 }
 
-export function createRepoAtlasTool(workspaceRoot: string, overrides: RepoAtlasPluginConfig = {}): HarnessTool {
+export function createRepoAtlasTool(workspaceRoot: string, overrides: RepoAtlasPluginConfig = {}, proposalManager = new ChangeProposalManager(createConfig(workspaceRoot, overrides))): HarnessTool {
   return {
     name: 'repo_atlas_analyze',
     description: '通过多轮 GoalSpec 澄清后，对当前 workspace 执行受预算约束的只读代码库分析并生成证据化报告。',
@@ -44,6 +49,7 @@ export function createRepoAtlasTool(workspaceRoot: string, overrides: RepoAtlasP
         return { policy: 'readonly', goal, clarification: { missing: missingGoalFields(goal), question: nextClarificationQuestion(goal) } }
       }
       const session = await analyzeRepository(goal, workspaceRoot, overrides)
+      proposalManager.registerSession(session)
       return { policy: 'readonly', goal, report: generateReport(session) }
     },
   }
