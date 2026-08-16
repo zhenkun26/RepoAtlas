@@ -5,11 +5,15 @@ Define reproducible compile-time and live-boot evidence that RepoAtlas conforms 
 ## Requirements
 ### Requirement: The adapter SHALL be checked against official public Harness types
 
-The repository MUST provide a compile-time contract check that resolves the public Harness tool, execution, session, Cordis context, approval, Goal, sandbox-policy, sandbox, and subprocess types from the exact compatibility checkout. RepoAtlas tool definitions and plugin apply shape MUST be assignable to those exports without relying only on locally handwritten interfaces.
+The repository MUST provide a compile-time contract check that resolves the public Harness tool, execution, session, Cordis context, approval, Goal, sandbox-policy, sandbox, and subprocess types from the exact compatibility checkout. RepoAtlas tool definitions and plugin apply shape MUST be assignable to those exports without relying only on locally handwritten interfaces. The local sandbox-policy request facade MUST model the complete official `SandboxMode` vocabulary for structural compatibility, while RepoAtlas runtime adapters MUST continue to reject any resolved mode other than `read-only` or `workspace-write` before sandbox confinement or subprocess execution.
 
 #### Scenario: The official API still matches
 - **WHEN** the contract check runs against the exact manifest revision with built Harness type declarations available
 - **THEN** RepoAtlas plugin registration, tool execution, session access, cancellation, and service-adapter shapes SHALL typecheck successfully
+
+#### Scenario: The official policy vocabulary includes an unconfined mode
+- **WHEN** the official sandbox-policy request accepts or resolves `danger-full-access`
+- **THEN** the structural facade SHALL remain type-compatible, but RepoAtlas controlled execution SHALL fail closed before sandbox confinement or subprocess execution
 
 #### Scenario: An official public shape drifts
 - **WHEN** a required exported type, method argument, or result shape is no longer compatible
@@ -25,12 +29,12 @@ The manifest's exact public revision MUST remain authoritative for both compile 
 
 ### Requirement: Live boot evidence SHALL prove plugin activation
 
-The explicit compatibility smoke MUST start the composed Harness Web profile with RepoAtlas installed, wait for the post-settlement readiness signal, probe the live loopback endpoint, and terminate only the process it started. Config composition or `--help` output alone MUST NOT count as plugin activation evidence.
+The explicit compatibility smoke MUST use the exact pinned Harness checkout after its declared root build has produced the host, client, and Web frontend outputs. It MUST start the composed Harness Web profile with RepoAtlas installed, wait for the post-settlement readiness signal, probe the live loopback endpoint, and terminate only the process it started. Config composition, `--help` output, or a host-only build MUST NOT count as plugin activation evidence.
 
 #### Scenario: The plugin boots in the pinned Web profile
-- **WHEN** the exact checkout has its locked dependencies and the explicit smoke runs
+- **WHEN** the exact checkout has its locked dependencies and complete declared root build outputs and the explicit smoke runs
 - **THEN** the profile SHALL compose `repo-atlas/harness`, reach the Harness Web readiness signal, answer a bounded loopback probe, and exit after controlled termination
 
 #### Scenario: Plugin loading fails or never settles
-- **WHEN** the plugin has an import, registration, schema, injection, or activation failure, or no readiness signal appears before the deadline
+- **WHEN** the plugin has an import, registration, schema, injection, activation, missing-build-output, or readiness failure before the deadline
 - **THEN** the smoke SHALL terminate its owned process, fail with bounded output, and SHALL NOT claim compatibility
