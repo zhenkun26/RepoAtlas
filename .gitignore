@@ -5,3 +5,4 @@ dist/
 .DS_Store
 .codex/
 reference/deepseek-harness/
+/.pnpm-store/
