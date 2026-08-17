@@ -149,7 +149,7 @@ try {
   const environment = sanitizedEnvironment()
   run('pnpm', ['dsh', 'plugin', '--profile', compatibility.profile, 'add', repoRoot], { env: environment })
   const config = run('pnpm', ['dsh', '--profile', compatibility.profile, '--dump-config'], { env: environment })
-  assertCondition(config.includes('repo-atlas/harness'), 'composed web profile did not include repo-atlas/harness')
+  assertCondition(config.includes('dsh-repo-atlas/harness'), 'composed web profile did not include dsh-repo-atlas/harness')
   run('node', [join(repoRoot, 'scripts', 'verify-harness-api-contract.mjs')], { cwd: repoRoot, env: environment })
   await bootAndProbe(environment)
 

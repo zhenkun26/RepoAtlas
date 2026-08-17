@@ -2,7 +2,7 @@
 
 ## 1. 启动与目标澄清
 
-在 Harness Web UI session 中加载 `repo-atlas` 插件后，调用 `repo_atlas_analyze`。初次调用只传入部分目标也可以：插件会返回缺失字段和一个主要问题。按轮次补充以下 GoalSpec：
+在 Harness Web UI session 中加载 `dsh-repo-atlas` 插件后，调用 `repo_atlas_analyze`。初次调用只传入部分目标也可以：插件会返回缺失字段和一个主要问题。按轮次补充以下 GoalSpec：
 
 - `intent`：`onboarding` 或 `architecture`。
 - `audience`：报告使用者。

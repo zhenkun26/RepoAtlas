@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-08-17
+goal: Make the DeepSeek Harness plugin name self-explanatory and improve
+  first-time project comprehension without changing runtime permissions or tool
+  contracts.

@@ -10,7 +10,7 @@ import { HarnessSessionRuntimeRegistry, type HarnessSessionRuntimeResolution } f
 import type { GoalSpec } from '../types.ts'
 import type { HarnessPluginContext, HarnessTool, HarnessToolExecution, RepoAtlasPluginConfig, RepoAtlasToolResult } from './public.ts'
 
-export const name = 'repo-atlas'
+export const name = 'dsh-repo-atlas'
 export const inject = ['tools'] as const
 
 export function apply(ctx: HarnessPluginContext, pluginConfig: RepoAtlasPluginConfig = {}): void {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { apply } from '../src/harness/plugin.ts'
+import { apply, name as pluginName } from '../src/harness/plugin.ts'
 import { createChangeProposalVerificationRunner } from '../src/harness/change-proposal-verification.ts'
 import { createChangeProposalCommitAuthorizer } from '../src/harness/change-proposal-commit.ts'
 import { createChangeProposalLandingAuthorizer } from '../src/harness/change-proposal-landing.ts'
@@ -117,6 +117,7 @@ test('Harness adapter registers read-only analysis and session-only proposal too
   const execution = harnessExecution(workspaceRoot)
   apply({ tools: { register: (tool) => registered.push(tool) }, logger: { info: (message) => logs.push(message), warn: () => undefined } }, { workspaceRoot })
   assert.equal(registered.length, 2)
+  assert.equal(pluginName, 'dsh-repo-atlas')
   const analysisTool = registered.find((tool) => tool.name === 'repo_atlas_analyze')
   const proposalTool = registered.find((tool) => tool.name === 'repo_atlas_change_proposal')
   assert.ok(analysisTool)

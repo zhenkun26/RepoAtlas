@@ -6,6 +6,7 @@ import { basename, join, resolve } from 'node:path'
 const repoRoot = resolve(process.cwd())
 const packageFile = join(repoRoot, 'package.json')
 const manifest = JSON.parse(readFileSync(packageFile, 'utf8'))
+const bundlePatch = readFileSync(join(repoRoot, 'cordis.patch.yml'), 'utf8')
 const distRoot = join(repoRoot, 'dist')
 let tempRoot
 
@@ -37,8 +38,10 @@ function filesUnder(root, relative = '') {
 }
 
 try {
+  assertCondition(manifest.name === 'dsh-repo-atlas', 'package name must use the dsh-repo-atlas public identity')
   assertCondition(manifest.private === true, 'package.json must remain private')
   assertCondition(manifest.license === 'MIT', 'package.json must declare the MIT license')
+  assertCondition(bundlePatch.includes('id: dsh-repo-atlas') && bundlePatch.includes('name: dsh-repo-atlas/harness'), 'bundle patch must use the dsh-repo-atlas identity')
   assertCondition(manifest.main === './dist/index.js', 'package main must use the built root')
   assertCondition(manifest.types === './dist/index.d.ts', 'package types must use the built root declaration')
   assertCondition(manifest.exports?.['.']?.default === './dist/index.js', 'root runtime export must use dist')
@@ -77,15 +80,16 @@ try {
   mkdirSync(consumer)
   run('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', consumer, tarball], { env: npmEnvironment })
   const installedPackage = JSON.parse(readFileSync(join(consumer, 'node_modules', manifest.name, 'package.json'), 'utf8'))
+  assertCondition(installedPackage.name === 'dsh-repo-atlas', 'installed artifact lost the dsh-repo-atlas package identity')
   assertCondition(installedPackage.private === true, 'installed artifact lost private package metadata')
   assertCondition(installedPackage.license === 'MIT', 'installed artifact lost MIT metadata')
   assertCondition(installedPackage.exports?.['.']?.default === './dist/index.js', 'installed root export does not use dist')
   assertCondition(installedPackage.exports?.['./harness']?.default === './dist/harness/plugin.js', 'installed Harness export does not use dist')
   run('node', ['--input-type=module', '--eval', `
-    const root = await import('repo-atlas')
-    const harness = await import('repo-atlas/harness')
+    const root = await import('dsh-repo-atlas')
+    const harness = await import('dsh-repo-atlas/harness')
     if (typeof root.analyzeRepository !== 'function') throw new Error('root export missing analyzeRepository')
-    if (harness.name !== 'repo-atlas' || typeof harness.apply !== 'function') throw new Error('Harness export shape is invalid')
+    if (harness.name !== 'dsh-repo-atlas' || typeof harness.apply !== 'function') throw new Error('Harness export shape is invalid')
     const tools = []
     harness.apply({ tools: { register: tool => tools.push(tool) } })
     if (!tools.some(tool => tool.name === 'repo_atlas_analyze')) throw new Error('built analysis tool did not register')
