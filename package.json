@@ -15,12 +15,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zhenkun26/RepoAtlas.git"
+    "url": "https://github.com/zhenkun26/dsh-repo-atlas.git"
   },
   "bugs": {
-    "url": "https://github.com/zhenkun26/RepoAtlas/issues"
+    "url": "https://github.com/zhenkun26/dsh-repo-atlas/issues"
   },
-  "homepage": "https://github.com/zhenkun26/RepoAtlas#readme",
+  "homepage": "https://github.com/zhenkun26/dsh-repo-atlas#readme",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

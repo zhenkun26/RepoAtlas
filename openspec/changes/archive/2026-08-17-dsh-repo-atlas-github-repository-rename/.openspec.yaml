@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-08-17
+goal: Make the GitHub repository identity match the dsh-repo-atlas package and
+  bundle names without changing runtime APIs, history, or release boundaries

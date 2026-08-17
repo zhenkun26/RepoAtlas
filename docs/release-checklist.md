@@ -20,7 +20,7 @@ This checklist describes release readiness; it is not an instruction to publish,
 - [x] Run a pinned real DeepSeek Harness smoke test and record the compatible revision: `47f943859bef60e4160492346772ded9b24f765a` with Node 24.x and pnpm 11.7.0.
 - [x] Recheck README installation instructions against the actual public Harness release at the pinned revision.
 - [x] Compile-check RepoAtlas public facades against official declarations from the exact Harness revision; a task-owned exact-pin checkout passed the v2.19 API probe.
-- [x] Run and review the v2.22-repaired strengthened live Web boot workflow; [run 31895791477](https://github.com/zhenkun26/RepoAtlas/actions/runs/31895791477) completed the exact-pin root build, official API contract, live loopback Web probe, and owned-process cleanup.
+- [x] Run and review the v2.22-repaired strengthened live Web boot workflow; [run 31895791477](https://github.com/zhenkun26/dsh-repo-atlas/actions/runs/31895791477) completed the exact-pin root build, official API contract, live loopback Web probe, and owned-process cleanup.
 
 ## Distribution decision
 
@@ -43,7 +43,7 @@ This checklist describes release readiness; it is not an instruction to publish,
 - [x] Document the proposed source-first support policy and manual release procedure; adoption remains a separate maintainer decision.
 - [x] Run `npm run verify:release-preflight` successfully on the final reviewed candidate; the clean candidate check passed before the evidence-record update.
 - [x] Create release notes from the changelog; the exact commit to be tagged is rechecked immediately before tagging.
-- [x] Create the separate `v0.1.1` tag and GitHub Release through the authorized release procedure; never move `v0.1.0`. The release URL is <https://github.com/zhenkun26/RepoAtlas/releases/tag/v0.1.1>.
+- [x] Create the separate `v0.1.1` tag and GitHub Release through the authorized release procedure; never move `v0.1.0`. The release URL is <https://github.com/zhenkun26/dsh-repo-atlas/releases/tag/v0.1.1>.
 - [x] Push the reviewed `main` revision and `v0.1.1` tag through the separately approved release procedure; npm publication remains out of scope.
 
 ## Explicit non-claims

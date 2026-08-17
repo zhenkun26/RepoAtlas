@@ -4,7 +4,7 @@ export const EXISTING_TAG_REVISION = '455dbb61d5cabe032e3497ba4d9eeb9c39584662'
 
 export const GITHUB_ABOUT_METADATA = Object.freeze({
   description: 'Safety-first, evidence-backed repository analysis and bounded change-lifecycle plugin for DeepSeek Harness.',
-  homepage: 'https://github.com/zhenkun26/RepoAtlas#readme',
+  homepage: 'https://github.com/zhenkun26/dsh-repo-atlas#readme',
   topics: Object.freeze([
     'deepseek-harness',
     'dsh',

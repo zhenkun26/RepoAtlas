@@ -10,7 +10,7 @@ All notable RepoAtlas changes will be documented here. The existing `v0.1.0` tag
 - v2.19 adds an official public-API type contract at the exact Harness pin, aligns sandbox policy with `{ session, mode }`, and upgrades the manual smoke to a bounded live Web boot and loopback probe.
 - v2.20 adds deterministic ESM/declaration output, built package exports, a minimal files allowlist, and offline installed-package imports for both the root and Harness entry.
 - v2.21 repairs the official sandbox-policy structural contract for the complete pinned mode vocabulary while preserving confined-only RepoAtlas execution.
-- v2.22 repairs the manual Harness compatibility workflow by completing the pinned repository's declared host, client, and Web build before live boot; [workflow run 31895791477](https://github.com/zhenkun26/RepoAtlas/actions/runs/31895791477) passed the exact-pin API and live Web smoke.
+- v2.22 repairs the manual Harness compatibility workflow by completing the pinned repository's declared host, client, and Web build before live boot; [workflow run 31895791477](https://github.com/zhenkun26/dsh-repo-atlas/actions/runs/31895791477) passed the exact-pin API and live Web smoke.
 
 ### Security
 
@@ -30,7 +30,7 @@ All notable RepoAtlas changes will be documented here. The existing `v0.1.0` tag
 ### Distribution and release status
 
 - This release remains source-first and keeps `private: true`; it is not an npm publication or compiled distribution.
-- The `v0.1.1` tag and [GitHub Release](https://github.com/zhenkun26/RepoAtlas/releases/tag/v0.1.1) point to the reviewed revision `3eb5c0c8c48373dd19a6e0317de8ffb26f0064bc`; the historical `v0.1.0` tag remains unchanged.
+- The `v0.1.1` tag and [GitHub Release](https://github.com/zhenkun26/dsh-repo-atlas/releases/tag/v0.1.1) point to the reviewed revision `3eb5c0c8c48373dd19a6e0317de8ffb26f0064bc`; the historical `v0.1.0` tag remains unchanged.
 - The local preflight passed before the manual release action; preflight itself does not create a tag, GitHub Release, npm publication, deployment, or support SLA.
 
 ## [0.1.0] - 2026-08-15
@@ -56,4 +56,4 @@ All notable RepoAtlas changes will be documented here. The existing `v0.1.0` tag
 
 ## Release policy
 
-The existing `v0.1.0` tag points to the historical commit `455dbb61d5cabe032e3497ba4d9eeb9c39584662` and remains unchanged. The source-first `v0.1.1` tag and [GitHub Release](https://github.com/zhenkun26/RepoAtlas/releases/tag/v0.1.1) were created for the reviewed commit `3eb5c0c8c48373dd19a6e0317de8ffb26f0064bc`. npm publication, compiled distribution, support policy, and future version compatibility remain separate decisions tracked in [the roadmap](docs/roadmap.md) and [the release checklist](docs/release-checklist.md).
+The existing `v0.1.0` tag points to the historical commit `455dbb61d5cabe032e3497ba4d9eeb9c39584662` and remains unchanged. The source-first `v0.1.1` tag and [GitHub Release](https://github.com/zhenkun26/dsh-repo-atlas/releases/tag/v0.1.1) were created for the reviewed commit `3eb5c0c8c48373dd19a6e0317de8ffb26f0064bc`. npm publication, compiled distribution, support policy, and future version compatibility remain separate decisions tracked in [the roadmap](docs/roadmap.md) and [the release checklist](docs/release-checklist.md).

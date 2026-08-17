@@ -76,7 +76,7 @@ const checklist = readText('docs/release-checklist.md', 'release-checklist-missi
 const changelog = readText('CHANGELOG.md', 'changelog-missing')
 
 addCheck('mit-license', license.includes('MIT License') && license.includes('Copyright (c) 2026 Zhenkun26'), 'mit-license-mismatch')
-addCheck('attribution-notice', notice.includes('RepoAtlas / 代码星图') && notice.includes('github.com/zhenkun26/RepoAtlas'), 'attribution-notice-mismatch')
+addCheck('attribution-notice', notice.includes('RepoAtlas / 代码星图') && notice.includes('github.com/zhenkun26/dsh-repo-atlas'), 'attribution-notice-mismatch')
 addCheck('support-policy', Boolean(supportPolicy), 'support-policy-missing')
 addCheck('release-process', Boolean(releaseProcess), 'release-process-missing')
 addCheck('readme-release-guidance', readme.includes('support-policy.md') && readme.includes('release-process.md'), 'readme-release-guidance-missing')

@@ -23,14 +23,14 @@ This procedure prepares and records a RepoAtlas source-first release. It is a re
 The following values are recommended manual GitHub About metadata. Applying them is a separate authorized GitHub operation; RepoAtlas tooling and workflows do not update them:
 
 - Description: `Safety-first, evidence-backed repository analysis and bounded change-lifecycle plugin for DeepSeek Harness.`
-- Homepage: `https://github.com/zhenkun26/RepoAtlas#readme` or another maintainer-selected documentation URL.
+- Homepage: `https://github.com/zhenkun26/dsh-repo-atlas#readme` or another maintainer-selected documentation URL.
 - Topics: `deepseek-harness`, `dsh`, `dsh-plugin`, `ai-coding`, `code-analysis`, `repository-analysis`, `typescript`, `developer-tools`, `safety`.
 
 These values are presentation metadata only. They do not change the source-first distribution contract or authorize a tag, GitHub Release, npm publication, or deployment.
 
 ## Authorized release action
 
-For v0.1.1, the maintainer manually created the exact tag and GitHub Release for reviewed commit `3eb5c0c8c48373dd19a6e0317de8ffb26f0064bc`, attached source-first release notes, and recorded <https://github.com/zhenkun26/RepoAtlas/releases/tag/v0.1.1>. The release describes the source checkout/plugin bundle and does not imply an npm package or compiled distribution. The existing `v0.1.0` tag was not reused.
+For v0.1.1, the maintainer manually created the exact tag and GitHub Release for reviewed commit `3eb5c0c8c48373dd19a6e0317de8ffb26f0064bc`, attached source-first release notes, and recorded <https://github.com/zhenkun26/dsh-repo-atlas/releases/tag/v0.1.1>. The release describes the source checkout/plugin bundle and does not imply an npm package or compiled distribution. The existing `v0.1.0` tag was not reused.
 
 The tag/release operation is intentionally not implemented in RepoAtlas automation. It must be separately approved and performed using the repository's normal protected-branch and release controls. v2.20 covers build output, exports, files allowlist, package smoke, and compatibility policy; that is technical artifact readiness only. Any future npm publication still requires independently reviewed version, registry, provenance, authentication, and release authorization work.
 

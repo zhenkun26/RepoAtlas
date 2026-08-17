@@ -1,8 +1,5 @@
-# public-plugin-identity Specification
+## MODIFIED Requirements
 
-## Purpose
-Define a self-explanatory DeepSeek Harness package and bundle identity without changing the existing tool API or runtime authority boundaries.
-## Requirements
 ### Requirement: The public package identity SHALL identify DeepSeek Harness and the feature
 
 The package metadata, Harness plugin export, bundle patch id, and visible Harness bundle name MUST use `dsh-repo-atlas` and `dsh-repo-atlas/harness` respectively. The canonical GitHub repository MUST use `zhenkun26/dsh-repo-atlas`, while the product brand remains `RepoAtlas / 代码星图`.

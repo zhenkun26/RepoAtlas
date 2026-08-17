@@ -3,7 +3,7 @@
 > A DeepSeek Harness plugin that helps an AI coding agent understand a repository from evidence, then review proposed changes through a bounded lifecycle.<br>
 > 一个帮助 AI coding agent 基于证据理解代码库，并在有界生命周期中审阅变更提案的 DeepSeek Harness 插件。
 
-[![CI](https://github.com/zhenkun26/RepoAtlas/actions/workflows/ci.yml/badge.svg)](https://github.com/zhenkun26/RepoAtlas/actions/workflows/ci.yml)
+[![CI](https://github.com/zhenkun26/dsh-repo-atlas/actions/workflows/ci.yml/badge.svg)](https://github.com/zhenkun26/dsh-repo-atlas/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933?logo=node.js&logoColor=white)](package.json)
 
@@ -54,20 +54,20 @@ The existing Harness tool names remain stable: `repo_atlas_analyze`, `repo_atlas
 
 ### Load the plugin from a source checkout / 从源码 checkout 加载插件
 
-The project is currently source-first and private. Build the local checkout, then add it to a Harness profile. The repository remains named `RepoAtlas`; the package and visible Harness bundle are named `dsh-repo-atlas` and `dsh-repo-atlas/harness`.<br>
-当前项目采用源码优先且保持 private。先构建本地 checkout，再将其添加到 Harness profile。仓库仍名为 `RepoAtlas`；包名和 Harness 中显示的 bundle 名称分别是 `dsh-repo-atlas` 与 `dsh-repo-atlas/harness`。
+The project is currently source-first and private. Build the local checkout, then add it to a Harness profile. The GitHub repository is named `dsh-repo-atlas`; the product brand remains `RepoAtlas`, and the package and visible Harness bundle are named `dsh-repo-atlas` and `dsh-repo-atlas/harness`.<br>
+当前项目采用源码优先且保持 private。先构建本地 checkout，再将其添加到 Harness profile。GitHub 仓库名为 `dsh-repo-atlas`；产品品牌仍为 `RepoAtlas`，包名和 Harness 中显示的 bundle 名称分别是 `dsh-repo-atlas` 与 `dsh-repo-atlas/harness`。
 
 ```bash
-git clone https://github.com/zhenkun26/RepoAtlas.git
+git clone https://github.com/zhenkun26/dsh-repo-atlas.git
 git clone https://github.com/deepseek-ai/deepseek-harness.git
 
-cd /absolute/path/to/RepoAtlas
+cd /absolute/path/to/dsh-repo-atlas
 npm ci
 npm run build
 
 cd /absolute/path/to/deepseek-harness
 pnpm install
-pnpm dsh plugin --profile web add /absolute/path/to/RepoAtlas
+pnpm dsh plugin --profile web add /absolute/path/to/dsh-repo-atlas
 pnpm dsh web
 ```
 
@@ -77,7 +77,7 @@ In the Harness Web UI, look for `dsh-repo-atlas/harness` in the plugin list. The
 ### Run local checks / 运行本地检查
 
 ```bash
-cd /absolute/path/to/RepoAtlas
+cd /absolute/path/to/dsh-repo-atlas
 npm ci
 npm test
 npm run typecheck
@@ -155,8 +155,8 @@ The existing `v0.1.1` GitHub Release remains an earlier source-first snapshot. T
 RepoAtlas is released under the [MIT License](LICENSE). Use, modification, and redistribution are allowed when the MIT copyright notice, license text, and disclaimer are retained.<br>
 RepoAtlas 使用 [MIT License](LICENSE) 发布。保留 MIT 版权声明、许可证文本和免责声明后，允许使用、修改和再分发。
 
-When citing, integrating, documenting, or deriving from this project, please identify **RepoAtlas / 代码星图** and link to <https://github.com/zhenkun26/RepoAtlas>. This provenance request is recorded separately in [NOTICE.md](NOTICE.md) and does not add legal conditions to the MIT License.<br>
-在引用、集成、文档说明或基于本项目衍生时，请标注 **RepoAtlas / 代码星图** 并链接 <https://github.com/zhenkun26/RepoAtlas>。这项来源说明单独记录在 [NOTICE.md](NOTICE.md) 中，不会向 MIT License 增加额外法律条件。
+When citing, integrating, documenting, or deriving from this project, please identify **RepoAtlas / 代码星图** and link to <https://github.com/zhenkun26/dsh-repo-atlas>. This provenance request is recorded separately in [NOTICE.md](NOTICE.md) and does not add legal conditions to the MIT License.<br>
+在引用、集成、文档说明或基于本项目衍生时，请标注 **RepoAtlas / 代码星图** 并链接 <https://github.com/zhenkun26/dsh-repo-atlas>。这项来源说明单独记录在 [NOTICE.md](NOTICE.md) 中，不会向 MIT License 增加额外法律条件。
 
 ## Development API / 开发 API
 
